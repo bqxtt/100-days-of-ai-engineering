@@ -1,5 +1,7 @@
 # 100 Days of AI Engineering · AI 全栈工程师 100 天
 
+> [English](README.en.md) · **中文**
+
 > A self-paced, hands-on curriculum that takes a **backend engineer** from neural-network fundamentals to production **LLM / RAG / Agent** systems — ~1 hour/day for 100 days.
 >
 > 面向**后端工程师**的大模型全栈进阶课:从神经网络原理一路到 RAG、Agent、微调与工程化,每天约 1 小时,共 100 天。
