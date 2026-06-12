@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 22 · 向量库：入库 + Top-K 检索</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--hit:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 22 · 向量库 = 高维空间找最近邻</h1>
+  <div class="sub">句子入库成点 → 查询找 Top-K 最近邻 → 暴力检索 vs 近似检索（HNSW 直觉）扫描量对比</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 入库 + Top-K 检索 <small>每点=一句话向量，查询点亮最近 K 个</small></h2>
+    <canvas id="space" height="320"></canvas>
+    <p class="note">点画布任意处=移动「查询向量」。连线指向当前 Top-K 命中，离得越近=语义越像。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 检索方式 <small>暴力扫全库 vs 近似只扫一片</small></h2>
+    <canvas id="scan" height="320"></canvas>
+    <div class="chips" id="modeChips">
+      <span class="chip on" data-m="brute">暴力 brute-force（召回100%）</span>
+      <span class="chip" data-m="ann">近似 ANN/HNSW（省扫描）</span>
+    </div>
+    <p class="note">暴力=每条都算，N 大就慢；近似=只算附近一簇，几十倍快，牺牲一点召回。</p>
+  </div>
+
+  <div class="card full">
+    <div class="row">
+      <button id="reseed">重新撒点</button>
+      <button id="add" class="ghost">＋ 入库 20 点</button>
+      <label>K <span class="stat" id="kv">3</span></label>
+      <input type="range" id="k" min="1" max="8" step="1" value="3" style="width:160px">
+      <span>库内向量 <span class="stat" id="n">60</span></span>
+      <span>扫描条数 <span class="stat" id="scanv">—</span></span>
+    </div>
+    <p class="note">把 K 拉大看更多命中；切「近似」看扫描条数骤降——这就是 HNSW/IVF 为百万级提速的直觉。</p>
+  </div>
+</div>
+<script>
+const sp=document.getElementById('space'),sc=document.getElementById('scan');
+let pts=[],q={x:.5,y:.5},mode='brute',K=3,scanned=0;
+const rnd=()=>Math.random();
+function seed(n){pts=[];const c=[[.25,.3],[.7,.35],[.45,.75]];for(let i=0;i<n;i++){const k=c[i%3];pts.push({x:Math.min(.97,Math.max(.03,k[0]+(rnd()-.5)*.32)),y:Math.min(.97,Math.max(.03,k[1]+(rnd()-.5)*.32))})}n_.textContent=pts.length}
+function fit(c){c.width=c.clientWidth*2;c.height=c.clientHeight*2;const x=c.getContext('2d');x.setTransform(2,0,0,2,0,0);return{x,w:c.clientWidth,h:c.clientHeight}}
+function topk(){const d=pts.map((p,i)=>({i,d:Math.hypot(p.x-q.x,p.y-q.y)}));d.sort((a,b)=>a.d-b.d);return d.slice(0,K).map(o=>o.i)}
+function drawSpace(){const{x,w,h}=fit(sp);x.clearRect(0,0,w,h);const top=topk();const set=new Set(top);
+  top.forEach(i=>{x.strokeStyle='#bc8cff';x.globalAlpha=.5;x.lineWidth=1.5;x.beginPath();x.moveTo(q.x*w,q.y*h);x.lineTo(pts[i].x*w,pts[i].y*h);x.stroke()});x.globalAlpha=1;
+  pts.forEach((p,i)=>{x.fillStyle=set.has(i)?'#bc8cff':'#1f6feb';x.beginPath();x.arc(p.x*w,p.y*h,set.has(i)?7:4,0,7);x.fill()});
+  x.fillStyle='#f0883e';x.beginPath();x.arc(q.x*w,q.y*h,8,0,7);x.fill();x.strokeStyle='#fff';x.lineWidth=2;x.stroke();
+  x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText('● 库内句子   ◆ 查询   ● Top-K',8,16)}
+function drawScan(){const{x,w,h}=fit(sc);x.clearRect(0,0,w,h);let scan=pts.map((p,i)=>i);
+  if(mode==='ann'){const r=.28;scan=pts.map((p,i)=>i).filter(i=>Math.hypot(pts[i].x-q.x,pts[i].y-q.y)<r);x.strokeStyle='#283143';x.beginPath();x.arc(q.x*w,q.y*h,r*w,0,7);x.stroke()}
+  scanned=scan.length;scanv.textContent=scanned+' / '+pts.length;
+  pts.forEach((p,i)=>{const on=scan.includes(i);x.fillStyle=on?'#3fb950':'#30363d';x.beginPath();x.arc(p.x*w,p.y*h,on?5:3,0,7);x.fill()});
+  x.fillStyle='#f0883e';x.beginPath();x.arc(q.x*w,q.y*h,7,0,7);x.fill();
+  x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText(mode==='brute'?'暴力：每条都算':'近似：只算附近一簇',8,16)}
+function draw(){drawSpace();drawScan()}
+const k_=document.getElementById('k'),kv=document.getElementById('kv'),n_=document.getElementById('n'),scanv=document.getElementById('scanv');
+sp.onclick=e=>{const r=sp.getBoundingClientRect();q={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};draw()};
+k_.oninput=()=>{K=+k_.value;kv.textContent=K;draw()};
+document.getElementById('modeChips').onclick=e=>{if(!e.target.dataset.m)return;mode=e.target.dataset.m;document.querySelectorAll('#modeChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.m===mode));draw()};
+document.getElementById('reseed').onclick=()=>{seed(60);draw()};
+document.getElementById('add').onclick=()=>{seed(pts.length+20);draw()};
+seed(60);draw();window.onresize=draw;
+</script>
+</body>
+</html>

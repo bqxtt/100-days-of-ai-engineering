@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 36 · Agent 架构模式：ReAct / Plan-and-Execute / Reflection</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1000px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .log{font:13px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;color:var(--fg);max-height:180px;overflow:auto}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 36 · Agent 架构模式</h1>
+  <div class="sub">三种主流模式 ReAct / Plan-and-Execute / Reflection——看 LLM 大脑、工具、循环怎么轮转</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>① 选模式 <small>形状不同：环 vs 队列 vs 重做闭环</small></h2>
+    <div class="chips" id="modes"></div>
+  </div>
+  <div class="card">
+    <h2>② 选个问题</h2>
+    <div class="chips" id="qs"></div>
+  </div>
+  <div class="card">
+    <h2>③ Agent 循环 <small>绿=大脑 蓝=工具 橙=记忆回灌 绿框=Final</small></h2>
+    <canvas id="cv" width="940" height="320"></canvas>
+    <div class="row">
+      <button id="play">▶ 跑一遍</button>
+      <button class="ghost" id="step">单步</button>
+      <button class="ghost" id="reset">重置</button>
+    </div>
+    <div class="log" id="log"></div>
+    <p class="note">ReAct=每步调模型选工具(慢但能纠错)；Plan-and-Execute=先排队再执行(省调用)；Reflection=做完自评重做(提质)。</p>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('cv'),x=cv.getContext('2d'),log=document.getElementById('log');
+const C={bg:'#0b0f15',fg:'#e6edf3',mut:'#8b949e',accent:'#58a6ff',ok:'#3fb950',warn:'#f0883e',card:'#161b22',line:'#283143'};
+const SC={ // 每个问题一条脚本：节点类型 t(think/act/obs/final) + 文本
+  calc:[['t','想：要算 23×47'],['a','Action: calculator(23*47)'],['o','Obs: 1081'],['f','Final: 1081']],
+  rag:[['t','想：要查 ReAct'],['a','Action: search(react)'],['o','Obs: 想一步做一步'],['f','Final: ReAct 是…']],
+  hop:[['t','想：先查论文号'],['a','search(react)→2210.03629'],['o','想：×0'],['a','calculator(2210.03629*0)'],['o','Obs: 0'],['f','Final: 0']],
+};
+let mode='react',q='calc',i=0,timer=null;
+function L(s){log.textContent+=s+'\n';log.scrollTop=log.scrollHeight;}
+function steps(){const b=SC[q];if(mode==='react')return b;
+  if(mode==='plan')return [['p','Plan: 列出全部步骤'],...b.map(s=>['e',s[1]]),['f','汇报结果']];
+  return [['t','draft: 初稿'],['c','critique: 找毛病'],['t','revise: 重做'],['c','critique: 通过'],['f','Final: 终稿']];}
+const COL={t:C.ok,a:C.accent,e:C.accent,p:C.warn,o:C.warn,c:C.warn,f:C.ok};
+const LB={t:'Thought',a:'Action',o:'Obs',f:'Final',p:'Plan',e:'Exec',c:'Critique'};
+function draw(){const S=steps();x.fillStyle=C.bg;x.fillRect(0,0,cv.width,cv.height);
+  const n=S.length,cx=470,cy=160,R=110;
+  for(let k=0;k<n;k++){const a=-Math.PI/2+k/n*2*Math.PI,px=cx+R*Math.cos(a),py=cy+R*Math.sin(a);
+    const on=k<=i,c=COL[S[k][0]];x.beginPath();x.arc(px,py,30,0,7);x.fillStyle=on?c:C.card;x.fill();
+    x.lineWidth=k===i?3:1;x.strokeStyle=on?c:C.line;x.stroke();
+    x.fillStyle=on?'#06121f':C.mut;x.font='11px sans-serif';x.textAlign='center';x.fillText(LB[S[k][0]],px,py+4);
+    const nx=cx+R*Math.cos(-Math.PI/2+((k+1)%n)/n*2*Math.PI),ny=cy+R*Math.sin(-Math.PI/2+((k+1)%n)/n*2*Math.PI);
+    if(mode==='react'||mode==='reflect'){x.strokeStyle=k<i?c:C.line;x.lineWidth=1;x.beginPath();x.moveTo(px,py);x.lineTo(nx,ny);x.stroke();}}
+  x.fillStyle=C.fg;x.font='13px sans-serif';x.fillText('mode: '+mode+' / Q: '+q,cx,30);
+  x.fillStyle=i<n?COL[S[i][0]]:C.fg;x.font='14px sans-serif';x.fillText(S[Math.min(i,n-1)][1],cx,300);}
+function reset(){i=0;log.textContent='';draw();}
+function next(){const S=steps();if(i<S.length){L('step '+(i+1)+': '+S[i][1]);i++;draw();}else{clearInterval(timer);timer=null;}}
+function play(){reset();timer=setInterval(()=>{if(i>=steps().length){clearInterval(timer);timer=null;return;}next();},700);}
+document.getElementById('play').onclick=play;document.getElementById('step').onclick=next;document.getElementById('reset').onclick=reset;
+function chips(id,arr,sel,cb){const e=document.getElementById(id);e.innerHTML='';arr.forEach(([v,t])=>{const c=document.createElement('span');c.className='chip'+(v===sel()?' on':'');c.textContent=t;c.onclick=()=>{cb(v);[...e.children].forEach(n=>n.classList.remove('on'));c.classList.add('on');reset();};e.appendChild(c);});}
+chips('modes',[['react','ReAct 边想边做'],['plan','Plan-and-Execute'],['reflect','Reflection 自评重做']],()=>mode,v=>mode=v);
+chips('qs',[['calc','算 23×47'],['rag','什么是 ReAct'],['hop','论文号×0']],()=>q,v=>q=v);
+reset();
+</script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 33 · 混合文档统一向量空间检索</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--img:#f0883e;--pdf:#58a6ff;--tab:#3fb950;--q:#d2a8ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  label{color:var(--mut);font-size:13px}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .lg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--mut);margin-top:8px}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:middle}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 33 · 混合文档统一向量空间检索</h1>
+  <div class="sub">图片/PDF/表格 各说各话 → 翻译成文本 → 投到同一向量空间 → 一句问句跨模态命中</div>
+</header>
+<div class="wrap">
+
+  <div class="card full">
+    <h2>① 异构进，同构出 <small>三种模态翻译成文本，再统一嵌入</small></h2>
+    <canvas id="flow" height="170"></canvas>
+    <div class="row">
+      <button id="unify">统一嵌入 →</button>
+      <button id="reset" class="ghost">重置</button>
+      <span class="note">图→caption、表格→“列名=值”序列化、PDF→直接文本，全走 nomic 嵌入</span>
+    </div>
+  </div>
+
+  <div class="card full">
+    <h2>② 同一向量空间检索 <small>选一个问题，看跨模态最近邻命中</small></h2>
+    <canvas id="space" height="300"></canvas>
+    <div class="chips" id="qChips">
+      <span class="chip on" data-q="0">上海人口多少？</span>
+      <span class="chip" data-q="1">合同谁盖章？</span>
+      <span class="chip" data-q="2">营收增长多少？</span>
+    </div>
+    <div class="lg">
+      <span><i class="dot" style="background:var(--img)"></i>图片(caption)</span>
+      <span><i class="dot" style="background:var(--pdf)"></i>PDF段</span>
+      <span><i class="dot" style="background:var(--tab)"></i>表格</span>
+      <span><i class="dot" style="background:var(--q)"></i>问句</span>
+      命中：<span class="stat" id="hit">—</span>
+    </div>
+    <p class="note">问句变成向量后，离它最近的块就是命中——图/表/PDF 平权竞争，谁语义最近谁赢。</p>
+  </div>
+</div>
+<script>
+const C=getComputedStyle(document.documentElement);
+const COL={img:C.getPropertyValue('--img').trim(),pdf:C.getPropertyValue('--pdf').trim(),tab:C.getPropertyValue('--tab').trim(),q:C.getPropertyValue('--q').trim(),mut:'#8b949e',line:'#283143'};
+function fit(c){c.width=c.clientWidth*2;c.height=c.clientHeight*2;const x=c.getContext('2d');x.setTransform(2,0,0,2,0,0);return x}
+
+// ---------- ① 流程：异构 -> 文本 -> 嵌入 ----------
+const fc=document.getElementById('flow');let unified=0;
+const SRC=[{t:'img',raw:'🖼 扫描合同',txt:'[图片] 甲乙盖章'},{t:'pdf',raw:'📄 财报段落',txt:'营收+28%'},{t:'tab',raw:'▦ GDP表',txt:'城市=上海,人口=2487万'}];
+function drawFlow(){const x=fit(fc),w=fc.clientWidth,h=fc.clientHeight;x.clearRect(0,0,w,h);
+  const cx=[w*0.14,w*0.5,w*0.86];SRC.forEach((s,i)=>{const y=30+i*45,c=COL[s.t];
+    x.fillStyle=c;x.font='12px sans-serif';x.textAlign='left';x.fillText(s.raw,8,y+5);
+    x.strokeStyle=c;x.globalAlpha=0.5+0.5*unified;x.beginPath();x.moveTo(110,y);x.lineTo(cx[1]-90,y);x.stroke();x.globalAlpha=1;
+    if(unified){x.fillStyle='#0b0f15';x.fillRect(cx[1]-86,y-12,174,24);x.strokeStyle=c;x.strokeRect(cx[1]-86,y-12,174,24);x.fillStyle=c;x.fillText('“'+s.txt+'”',cx[1]-80,y+4);
+      x.beginPath();x.moveTo(cx[1]+90,y);x.lineTo(cx[2]-12,y);x.stroke();}});
+  x.textAlign='center';x.fillStyle=COL.mut;x.fillText('原始 3 模态',w*0.14,150);x.fillText('翻译成文本',w*0.5,150);
+  if(unified){x.fillStyle=COL.tab;x.fillText('→ nomic 嵌入(768维)',w*0.86,150);}else x.fillText('（点统一嵌入）',w*0.86,150);}
+document.getElementById('unify').onclick=()=>{unified=1;drawFlow();drawSpace()};
+document.getElementById('reset').onclick=()=>{unified=0;drawFlow();drawSpace()};
+
+// ---------- ② 同一向量空间：每块一个2D坐标，问句找最近邻 ----------
+const sc=document.getElementById('space');
+const PTS=[{t:'img',x:.78,y:.30,l:'图:合同盖章'},{t:'pdf',x:.30,y:.72,l:'PDF:营收+28%'},{t:'pdf',x:.42,y:.55,l:'PDF:上海驱动'},{t:'tab',x:.70,y:.78,l:'表:上海2487万'}];
+const QS=[{x:.74,y:.80,l:'上海人口?'},{x:.82,y:.26,l:'谁盖章?'},{x:.26,y:.70,l:'营收增长?'}];
+let qi=0;
+function drawSpace(){const x=fit(sc),w=sc.clientWidth,h=sc.clientHeight;x.clearRect(0,0,w,h);
+  x.strokeStyle=COL.line;x.strokeRect(4,4,w-8,h-8);x.fillStyle=COL.mut;x.font='11px sans-serif';x.textAlign='left';x.fillText('统一向量空间（2D投影）',12,20);
+  if(!unified){x.fillStyle=COL.mut;x.textAlign='center';x.fillText('先点上面「统一嵌入」，三模态才进同一空间',w/2,h/2);return;}
+  const q=QS[qi],qx=q.x*w,qy=q.y*h;let bi=0,bd=9;PTS.forEach((p,i)=>{const d=Math.hypot(p.x-q.x,p.y-q.y);if(d<bd){bd=d;bi=i}});
+  PTS.forEach((p,i)=>{const px=p.x*w,py=p.y*h;x.strokeStyle=i==bi?COL.q:COL.line;x.globalAlpha=i==bi?1:0.4;x.lineWidth=i==bi?2.5:1;x.beginPath();x.moveTo(qx,qy);x.lineTo(px,py);x.stroke();x.globalAlpha=1;
+    x.fillStyle=COL[p.t];x.beginPath();x.arc(px,py,i==bi?11:8,0,7);x.fill();if(i==bi){x.strokeStyle='#fff';x.lineWidth=2;x.stroke();}
+    x.fillStyle=COL.mut;x.font='11px sans-serif';x.textAlign='center';x.fillText(p.l,px,py+24);});
+  x.fillStyle=COL.q;x.beginPath();x.arc(qx,qy,9,0,7);x.fill();x.fillStyle=COL.q;x.fillText('❓'+q.l,qx,qy-16);
+  document.getElementById('hit').textContent=PTS[bi].l;}
+document.getElementById('qChips').onclick=e=>{if(!e.target.dataset.q)return;qi=+e.target.dataset.q;document.querySelectorAll('#qChips .chip').forEach(c=>c.classList.toggle('on',+c.dataset.q===qi));drawSpace()};
+drawFlow();drawSpace();window.onresize=()=>{drawFlow();drawSpace()};
+</script>
+</body>
+</html>

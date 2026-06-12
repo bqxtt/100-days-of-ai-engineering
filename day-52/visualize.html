@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 52-53 · 多 Agent 开发团队 — orchestrator-worker 编排可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 52-53 · 多 Agent 开发团队</h1>
+  <div class="sub">orchestrator-worker 编排：Supervisor 拆活 → PM 规格 → Coder 写码 → QA exec 真测 → Reviewer 评审 → 双绿交付 / 红了打回重写</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>流水线动画 <small>单步走完一轮，看任务在团队里流转；前两轮 QA 故意打回，第3轮双绿交付</small></h2>
+    <canvas id="cv" width="1040" height="430"></canvas>
+    <div class="row">
+      <button id="step">下一步 ▶</button>
+      <button id="auto" class="ghost">自动播放</button>
+      <button id="reset" class="ghost">重置</button>
+      <span class="stat" id="status">就绪</span>
+    </div>
+    <p class="note">后端类比：和 CI/CD 流水线一样——提交→构建→测试→评审，红灯回滚重提。Supervisor=编排器，QA exec=唯一的客观关卡（ground truth），双绿才放行。</p>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+const C={bg:'#0b0f15',card:'#161b22',line:'#283143',fg:'#e6edf3',mut:'#8b949e',acc:'#58a6ff',ok:'#3fb950',warn:'#f0883e',bad:'#da3633'};
+// 角色节点：x,y 中心；is_prime 三轮，前两轮 QA 红打回，第三轮绿交付
+const N=[
+ {id:'sup',name:'Supervisor',sub:'编排/调度',x:520,y:55},
+ {id:'pm', name:'PM',sub:'需求→规格',x:140,y:175},
+ {id:'cod',name:'Coder',sub:'写代码',x:380,y:300},
+ {id:'qa', name:'QA',sub:'exec 真测',x:660,y:300},
+ {id:'rev',name:'Reviewer',sub:'评审',x:900,y:175},
+];
+// 步骤脚本：每步=点亮谁+说明+成败
+const steps=[
+ {hl:'sup',t:'Supervisor 接活：写 is_prime(n)',c:C.acc},
+ {hl:'pm', t:'PM 规格：is_prime(n)→True/False，含 n≤1',c:C.acc},
+ {hl:'cod',t:'第1轮 Coder：忘了 n=2 边界',c:C.warn},
+ {hl:'qa', t:'QA exec：assert is_prime(2) ❌ 红，打回',c:C.bad},
+ {hl:'cod',t:'第2轮 Coder：错把偶数全判素',c:C.warn},
+ {hl:'qa', t:'QA exec：assert !is_prime(8) ❌ 红，打回',c:C.bad},
+ {hl:'cod',t:'第3轮 Coder：6k±1 试除，修对',c:C.ok},
+ {hl:'qa', t:'QA exec：4 条断言 ✅ 绿',c:C.ok},
+ {hl:'rev',t:'Reviewer：OK，双绿放行',c:C.ok},
+ {hl:'sup',t:'📦 交付：is_prime 通过，团队收工',c:C.ok},
+];
+let cur=-1,timer=null;
+function box(n,on,col){
+  const w=170,h=58,x=n.x-w/2,y=n.y;
+  ctx.fillStyle=on?'#1d2740':C.card; ctx.strokeStyle=on?col:C.line; ctx.lineWidth=on?2.5:1;
+  ctx.beginPath(); ctx.roundRect(x,y,w,h,10); ctx.fill(); ctx.stroke();
+  ctx.fillStyle=on?col:C.fg; ctx.font='bold 15px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(n.name,n.x,y+24); ctx.fillStyle=C.mut; ctx.font='11px sans-serif'; ctx.fillText(n.sub,n.x,y+42);
+}
+function arrow(a,b,col){ // 角色间连线
+  ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.beginPath();
+  ctx.moveTo(a.x,a.y+58); ctx.lineTo(b.x,b.y); ctx.stroke();
+}
+const byId=id=>N.find(n=>n.id===id);
+function draw(){
+  ctx.fillStyle=C.bg; ctx.fillRect(0,0,W,H);
+  const order=[['sup','pm'],['pm','cod'],['cod','qa'],['qa','rev'],['rev','sup']];
+  order.forEach(([a,b])=>arrow(byId(a),byId(b),C.line));
+  const hl=cur>=0?steps[cur].hl:null, col=cur>=0?steps[cur].c:C.acc;
+  N.forEach(n=>box(n,n.id===hl,col));
+  ctx.textAlign='center'; ctx.fillStyle=cur>=0?col:C.mut; ctx.font='bold 17px sans-serif';
+  ctx.fillText(cur>=0?steps[cur].t:'点「下一步」看任务在团队里流转', W/2, 410);
+  document.getElementById('status').textContent=cur<0?'就绪':`步骤 ${cur+1}/${steps.length}`;
+}
+function step(){ if(cur<steps.length-1){cur++;draw();} else {clearInterval(timer);timer=null;} }
+document.getElementById('step').onclick=step;
+document.getElementById('reset').onclick=()=>{clearInterval(timer);timer=null;cur=-1;draw();};
+document.getElementById('auto').onclick=()=>{if(timer){clearInterval(timer);timer=null;return;} timer=setInterval(step,1100);};
+draw();
+</script>
+</body>
+</html>

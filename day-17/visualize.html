@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 17 · 流式输出：token 边生成边流出</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  .lvl{color:var(--warn)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 17 · 流式输出：token 边生成边流出</h1>
+  <div class="sub">非流式干等整段 vs 流式逐字打字机 → 底层就是一串 SSE data: 事件，全都能动手玩</div>
+</header>
+<div class="wrap">
+
+  <div class="card full">
+    <h2>① 打字机回答 <small>左:非流式整段蹦出 右:流式逐 token 流出</small></h2>
+    <canvas id="type" height="200"></canvas>
+    <div class="chips" id="modeChips">
+      <span class="chip" data-m="batch">非流式（等 TTFT 后整段）</span>
+      <span class="chip on" data-m="stream">流式（首字立刻 + 逐 token）</span>
+    </div>
+    <div class="row">
+      <button id="run">▶ 发送请求</button>
+      <button id="reset" class="ghost">重置</button>
+      <label>token 速度 <span class="lvl" id="spdv">慢</span></label>
+      <input type="range" id="spd" min="20" max="200" step="10" value="70" style="width:160px">
+      <span>TTFT <span class="stat" id="ttft">—</span></span>
+      <span>tokens <span class="stat" id="tok">0</span></span>
+    </div>
+    <p class="note">流式不缩短总时长，只把"首字延迟 TTFT"砍到极低——体验立刻翻倍。</p>
+  </div>
+
+  <div class="card full">
+    <h2>② SSE 事件流 <small>message_start → content_block_delta*N → message_stop</small></h2>
+    <canvas id="sse" height="220"></canvas>
+    <p class="note">每个 token = 一行 data: 事件。客户端剥掉 data: 前缀 → 解析 JSON → 拼接 delta = 完整回答。这就是 EventSource 在做的事。</p>
+  </div>
+</div>
+<script>
+const ANSWER="你好，流式输出就是边生成边返回，逐 token 推给前端。";
+let mode='stream',spd=70,running=false,emitted=0,t0=0,ttft=0,events=[];
+const tc=document.getElementById('type'),sc=document.getElementById('sse');
+function clear(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+// ---------- 打字机回答 ----------
+function drawType(){const x=clear(tc),w=tc.clientWidth,h=tc.clientHeight;
+  x.fillStyle='#8b949e';x.font='12px sans-serif';x.fillText('USER: 解释一下流式',12,22);
+  const shown=mode==='batch'?(emitted>=ANSWER.length?ANSWER:''):ANSWER.slice(0,emitted);
+  x.fillStyle='#e6edf3';x.font='17px -apple-system,sans-serif';
+  const txt='AI: '+shown+(running&&(emitted<ANSWER.length)?'▌':'');
+  const max=Math.floor((w-24)/16);for(let i=0,y=58;i<txt.length;i+=max,y+=26)x.fillText(txt.slice(i,i+max),12,y);
+  if(mode==='batch'&&running&&emitted<ANSWER.length){x.fillStyle='#f0883e';x.font='13px sans-serif';x.fillText('…等整段生成（盯空白）',12,58)}}
+// ---------- SSE 事件流 ----------
+function drawSSE(){const x=clear(sc),w=sc.clientWidth,h=sc.clientHeight;x.font='11px Menlo,monospace';
+  const rows=events.slice(-12);let y=18;for(const e of rows){x.fillStyle=e.c;x.fillText('data: '+e.t,10,y);y+=17}
+  x.fillStyle='#8b949e';if(events.length){x.fillText('已发 '+events.length+' 个事件',10,h-8)}else x.fillText('点「发送请求」看事件逐条流出',10,18)}
+function pushE(type,txt,c){events.push({t:JSON.stringify({type,...txt}).slice(0,46)+'…',c})}
+function draw(){drawType();drawSSE();document.getElementById('tok').textContent=emitted;document.getElementById('ttft').textContent=ttft?ttft+'ms':'—'}
+function tick(){if(!running)return;const now=performance.now();
+  if(mode==='batch'){if(now-t0>1100){if(!ttft)ttft=Math.round(now-t0);emitted=ANSWER.length;events=[];pushE('message_start',{},'#58a6ff');for(const ch of ANSWER)pushE('content_block_delta',{text:ch},'#3fb950');pushE('message_stop',{},'#f0883e');running=false;document.getElementById('run').textContent='▶ 发送请求';draw();return}draw();requestAnimationFrame(tick);return}
+  if(emitted<ANSWER.length){if(emitted===0){ttft=Math.round(now-t0);pushE('message_start',{},'#58a6ff')}pushE('content_block_delta',{text:ANSWER[emitted]},'#3fb950');emitted++;draw();setTimeout(()=>requestAnimationFrame(tick),spd)}else{pushE('message_stop',{},'#f0883e');running=false;document.getElementById('run').textContent='▶ 发送请求';draw()}}
+function reset(){running=false;emitted=0;ttft=0;events=[];document.getElementById('run').textContent='▶ 发送请求';draw()}
+document.getElementById('modeChips').onclick=e=>{if(!e.target.dataset.m)return;mode=e.target.dataset.m;document.querySelectorAll('#modeChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.m===mode));reset()};
+const spd_=document.getElementById('spd');spd_.oninput=()=>{spd=240-+spd_.value;document.getElementById('spdv').textContent=spd>160?'慢':spd>100?'中':'快'};
+document.getElementById('run').onclick=e=>{if(running){running=false;e.target.textContent='▶ 发送请求';return}reset();running=true;t0=performance.now();e.target.textContent='⏸ 流中…';tick()};
+document.getElementById('reset').onclick=reset;
+draw();window.onresize=draw;
+</script>
+</body>
+</html>

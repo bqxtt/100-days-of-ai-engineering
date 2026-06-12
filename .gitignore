@@ -1,0 +1,11 @@
+# 环境
+.venv/
+__pycache__/
+*.pyc
+
+# 本地 agent 配置/记忆，不入库
+.claude/
+
+# 练习运行时产物
+**/.checkpoint.json
+.DS_Store

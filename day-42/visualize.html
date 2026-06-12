@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 42-43 · 代码分析 Agent — ReAct 循环可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 42-43 · 代码分析 Agent</h1>
+  <div class="sub">单步走完 ReAct 循环：Thought 想 → Action 选工具 → Observation 文件系统真值 → 塞回记忆 → 再想，直到出报告</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>① ReAct 循环 <small>蓝=思考 橙=调工具 绿=观察 灰=未到</small></h2>
+    <canvas id="loop" width="1040" height="240"></canvas>
+    <div class="row">
+      <button id="step">▶ 单步执行</button>
+      <button class="ghost" id="reset">重置</button>
+      <span class="stat" id="stat">第 0 步 / 等待开始</span>
+    </div>
+    <p class="note">模拟分析 <b>day-1/</b>：Agent 不是一问一答，而是自己决定 list_files → count_lines → 出报告，全程多步自主。</p>
+  </div>
+  <div class="card">
+    <h2>② 短期记忆 messages <small>每步追加，越长模型上下文越全</small></h2>
+    <canvas id="mem" width="1040" height="220"></canvas>
+  </div>
+</div>
+<script>
+// ReAct 脚本：每步=[阶段, 文字]；阶段 T=Thought A=Action O=Observation F=Final
+const SCRIPT=[
+ {p:"T",t:"先看 day-1/ 里有哪些文件",mem:"system: 你是代码分析Agent"},
+ {p:"A",t:"list_files('day-1')",mem:"assistant: tool_call list_files"},
+ {p:"O",t:"README.md, notes.md, practice.py, visualize.html",mem:"tool: 4个文件"},
+ {p:"T",t:"对 practice.py 统计行数/函数",mem:"assistant: 思考"},
+ {p:"A",t:"count_lines('day-1/practice.py')",mem:"assistant: tool_call count_lines"},
+ {p:"O",t:"行数=55 函数数=2",mem:"tool: 55行/2函数"},
+ {p:"F",t:"报告：4文件·55行·2函数 — 实践量小而完整",mem:"assistant: 最终报告✅"},
+];
+const COL={T:"#58a6ff",A:"#f0883e",O:"#3fb950",F:"#3fb950",idle:"#283143"};
+const NAME={T:"Thought",A:"Action",O:"Observation",F:"Report"};
+let i=0;
+const lc=document.getElementById("loop"),lx=lc.getContext("2d");
+const mc=document.getElementById("mem"),mx=mc.getContext("2d");
+function loop(){
+  lx.clearRect(0,0,1040,240);
+  const n=SCRIPT.length, bw=128, gap=(1040-n*bw)/(n+1);
+  for(let k=0;k<n;k++){
+    const x=gap+k*(bw+gap), y=70, done=k<i, cur=k===i-1;
+    const c=done?COL[SCRIPT[k].p]:COL.idle;
+    lx.fillStyle=done?c+"33":"#11161f"; lx.strokeStyle=c; lx.lineWidth=cur?3:1.5;
+    lx.beginPath(); lx.roundRect(x,y,bw,90,10); lx.fill(); lx.stroke();
+    lx.fillStyle=done?c:"#5b6675"; lx.font="bold 13px sans-serif"; lx.textAlign="center";
+    lx.fillText(NAME[SCRIPT[k].p],x+bw/2,y+22);
+    lx.fillStyle=done?"#e6edf3":"#5b6675"; lx.font="11px sans-serif";
+    wrap(lx,SCRIPT[k].t,x+bw/2,y+44,bw-14,14);
+    if(k<n-1){lx.strokeStyle=done?"#3fb950":"#283143";lx.beginPath();lx.moveTo(x+bw,y+45);lx.lineTo(x+bw+gap,y+45);lx.stroke();}
+  }
+  lx.fillStyle="#8b949e";lx.font="12px sans-serif";lx.textAlign="left";
+  lx.fillText("↻ 工具未空就回灌再想，循环；模型不调工具则出报告收尾（护栏 8 步）",16,210);
+}
+function mem(){
+  mx.clearRect(0,0,1040,220); mx.textAlign="left";
+  for(let k=0;k<i;k++){
+    const y=14+k*28;
+    mx.fillStyle=COL[SCRIPT[k].p]+"22";mx.strokeStyle=COL[SCRIPT[k].p];mx.lineWidth=1;
+    mx.beginPath();mx.roundRect(16,y,1008,24,6);mx.fill();mx.stroke();
+    mx.fillStyle="#e6edf3";mx.font="12px monospace";mx.fillText(SCRIPT[k].mem,28,y+16);
+  }
+  if(i===0){mx.fillStyle="#5b6675";mx.font="13px sans-serif";mx.fillText("点「单步执行」追加记忆…",24,30);}
+}
+function wrap(c,t,x,y,w,lh){let ln="",yy=y;for(const ch of t){if(c.measureText(ln+ch).width>w){c.fillText(ln,x,yy);ln=ch;yy+=lh;}else ln+=ch;}c.fillText(ln,x,yy);}
+function stat(){const el=document.getElementById("stat");el.textContent=i>=SCRIPT.length?`第 ${i} 步 / 报告完成 ✅`:`第 ${i} 步 / ${i?NAME[SCRIPT[i-1].p]:"等待开始"}`;}
+function draw(){loop();mem();stat();}
+document.getElementById("step").onclick=()=>{if(i<SCRIPT.length)i++;draw();};
+document.getElementById("reset").onclick=()=>{i=0;draw();};
+draw();
+</script>
+</body>
+</html>

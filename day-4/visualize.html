@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 4 · Transformer Encoder 可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  .lvl{color:var(--warn)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 4 · Transformer Encoder 拆开看</h1>
+  <div class="sub">正弦位置编码热力图 → 多头注意力，每个头各看一面，全都能动手玩</div>
+</header>
+<div class="wrap">
+
+  <div class="card full">
+    <h2>① 正弦位置编码 <small>横=维度 纵=位置，斑马纹=多位二进制时钟，给无序注意力补语序</small></h2>
+    <canvas id="pe" height="240"></canvas>
+    <div class="row">
+      <label>序列长度 <span class="lvl" id="seqv">32</span></label>
+      <input type="range" id="seq" min="8" max="48" step="1" value="32" style="width:160px">
+      <label>维度 d <span class="lvl" id="dimv">64</span></label>
+      <input type="range" id="dim" min="16" max="128" step="8" value="64" style="width:160px">
+      <span id="hover" class="stat">悬停读值</span>
+    </div>
+    <p class="note">低维（左）快变像个位，高维（右）慢变像高位，合起来唯一编码每个位置。蓝=−1 黄=+1。</p>
+  </div>
+
+  <div class="card full">
+    <h2>② 多头注意力 <small>同一句话，每个头各管 64 维、各学一种关系。格子越亮=关注越强</small></h2>
+    <canvas id="attn" height="260"></canvas>
+    <div class="row">
+      <span>头数</span>
+      <div class="chips" id="hChips">
+        <span class="chip" data-h="1">1 头</span>
+        <span class="chip on" data-h="4">4 头</span>
+        <span class="chip" data-h="8">8 头</span>
+      </div>
+      <label>看第 <span class="lvl" id="hidv">1</span> 个头</label>
+      <input type="range" id="hid" min="1" max="4" step="1" value="1" style="width:160px">
+      <button id="re" class="ghost">换一组权重</button>
+    </div>
+    <p class="note">拖滑块切换不同的头：每个头注意力图都不一样——一头管邻近、一头管远距离、一头管句首句尾。多头=并行多视角。</p>
+  </div>
+</div>
+<script>
+const TOK=["The","cat","sat","on","the","mat"];
+// ---------- ① 位置编码 ----------
+function PE(seq,d){const m=[];for(let p=0;p<seq;p++){const r=[];for(let i=0;i<d;i++){const a=p/Math.pow(10000,2*Math.floor(i/2)/d);r.push(i%2?Math.cos(a):Math.sin(a))}m.push(r)}return m}
+const pc=document.getElementById('pe');let peM=[];
+function drawPE(){const seq=+seq_.value,d=+dim_.value;peM=PE(seq,d);const w=pc.clientWidth,h=pc.clientHeight;pc.width=w*2;pc.height=h*2;const x=pc.getContext('2d');x.scale(2,2);x.clearRect(0,0,w,h);const cw=w/d,ch=h/seq;
+  for(let p=0;p<seq;p++)for(let i=0;i<d;i++){const v=peM[p][i],t=(v+1)/2;x.fillStyle=`rgb(${40+t*200},${60+t*120},${200-t*120})`;x.fillRect(i*cw,p*ch,cw+1,ch+1)}}
+pc.onmousemove=e=>{const r=pc.getBoundingClientRect(),d=+dim_.value,seq=+seq_.value;const i=Math.floor((e.clientX-r.left)/r.width*d),p=Math.floor((e.clientY-r.top)/r.height*seq);if(peM[p]&&peM[p][i]!=null)document.getElementById('hover').textContent=`位置${p} 维${i} = ${peM[p][i].toFixed(3)}`};
+// ---------- ② 多头注意力 ----------
+let H=4,W;const rnd=()=>Math.random()*2-1;
+function genW(){W=[];for(let head=0;head<8;head++){const a=[];for(let i=0;i<TOK.length;i++){const r=[];for(let j=0;j<TOK.length;j++){let base=Math.exp(-Math.abs(i-j)/(1+head%3));if(head%2)base=Math.exp(-Math.abs(j-(i+head)%6));r.push(base+0.1*Math.abs(rnd()))}const s=r.reduce((p,c)=>p+c,0);a.push(r.map(v=>v/s))}W.push(a)}}
+const av=document.getElementById('attn');
+function drawAttn(){const head=+hid_.value-1,n=TOK.length,w=av.clientWidth,h=av.clientHeight;av.width=w*2;av.height=h*2;const x=av.getContext('2d');x.scale(2,2);x.clearRect(0,0,w,h);const P=70,g=(Math.min(w,h)-P-12)/n;x.font='12px sans-serif';
+  for(let i=0;i<n;i++){x.fillStyle='#8b949e';x.textAlign='right';x.fillText(TOK[i],P-6,P+i*g+g/2+4);x.textAlign='center';x.save();x.translate(P+i*g+g/2,P-8);x.fillText(TOK[i],0,0);x.restore()}
+  const M=W[head];for(let i=0;i<n;i++)for(let j=0;j<n;j++){const v=M[i][j];x.fillStyle=`rgba(88,166,255,${v})`;x.fillRect(P+j*g,P+i*g,g-2,g-2);if(v>0.2){x.fillStyle='#0b0f15';x.textAlign='center';x.fillText(v.toFixed(2),P+j*g+g/2,P+i*g+g/2+4)}}
+  x.fillStyle='#8b949e';x.textAlign='left';x.fillText(`第 ${head+1}/${H} 个头`,P,h-6)}
+function setH(n){H=n;hid_.max=n;if(+hid_.value>n)hid_.value=n;document.getElementById('hidv').textContent=hid_.value;document.querySelectorAll('#hChips .chip').forEach(c=>c.classList.toggle('on',+c.dataset.h===n));drawAttn()}
+// wiring
+const seq_=document.getElementById('seq'),dim_=document.getElementById('dim'),hid_=document.getElementById('hid');
+seq_.oninput=()=>{document.getElementById('seqv').textContent=seq_.value;drawPE()};
+dim_.oninput=()=>{document.getElementById('dimv').textContent=dim_.value;drawPE()};
+hid_.oninput=()=>{document.getElementById('hidv').textContent=hid_.value;drawAttn()};
+document.getElementById('hChips').onclick=e=>{if(e.target.dataset.h)setH(+e.target.dataset.h)};
+document.getElementById('re').onclick=()=>{genW();drawAttn()};
+genW();drawPE();setH(4);window.onresize=()=>{drawPE();drawAttn()};
+</script>
+</body>
+</html>

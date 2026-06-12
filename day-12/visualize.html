@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 12 · Prompt 技巧可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1180px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 8px;font-size:15px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px;display:block;margin-top:2px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 12 · Zero-shot vs Few-shot vs Chain-of-Thought</h1>
+  <div class="sub">同一道算术题，三种 prompt 怎么组装 + CoT 推理步骤逐步展开（发给 claude-opus-4-8）</div>
+</header>
+<div class="wrap">
+  <div class="card"><h2>① Zero-shot 零样本<small>裸问，最省</small></h2><canvas id="c0" height="300"></canvas></div>
+  <div class="card"><h2>② Few-shot 少样本<small>塞 2 条示例对齐格式</small></h2><canvas id="c1" height="300"></canvas></div>
+  <div class="card"><h2>③ CoT 思维链<small>让我们一步步想 → 先推理后答</small></h2><canvas id="c2" height="300"></canvas></div>
+  <div class="card full">
+    <div class="row">
+      <button id="run">▶ 让我们一步步想（展开 CoT）</button>
+      <button id="reset" class="ghost">重置</button>
+      <span>CoT 步骤 <span class="stat" id="stp">0</span>/4</span>
+      <span>token 占用 zero<span class="stat" id="t0"></span> · few<span class="stat" id="t1"></span> · cot<span class="stat" id="t2"></span></span>
+    </div>
+    <p class="note">点按钮看右栏 CoT 逐步展开：23 用掉 20 → 3，买进 6 → 9。Few-shot 越多示例 token 越多越贵；CoT 几乎不加示例，靠一句触发语换来更准。</p>
+  </div>
+</div>
+<script>
+const Q="食堂23苹果,用20,买6=?";
+const blocks={
+  c0:[["sys","严谨数学助教 只输出答案"],["user",Q]],
+  c1:[["sys","严谨数学助教 只输出答案"],["user","笔5取2加4=?"],["asst","7"],["user","车10走3来5=?"],["asst","12"],["user",Q]],
+  c2:[["sys","数学助教 先推理后答"],["user",Q+" 让我们一步步想"]]
+};
+const cotSteps=["第1步: 23-20 = 3","第2步: 3+6 = 9","第3步: 检查无误","答案: 9"];
+const COL={sys:'#1f6feb',user:'#3fb950',asst:'#f0883e',cot:'#a371f7'};
+function tok(arr){return arr.reduce((s,b)=>s+b[1].length,0)}
+function clear(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+function pill(x,bx,y,w,role,txt){x.fillStyle=COL[role];x.globalAlpha=.18;x.fillRect(bx,y,w,26);x.globalAlpha=1;x.strokeStyle=COL[role];x.strokeRect(bx,y,w,26);x.fillStyle=COL[role];x.font='10px sans-serif';x.fillText(role,bx+5,y+11);x.fillStyle='#e6edf3';x.font='12px sans-serif';x.fillText(txt.slice(0,22),bx+5,y+22)}
+function draw(id,extra){const c=document.getElementById(id),x=clear(c),w=c.clientWidth;let y=10;blocks[id].forEach(b=>{pill(x,8,y,w-16,b[0],b[1]);y+=32});(extra||[]).forEach(t=>{pill(x,8,y,w-16,'cot',t);y+=32})}
+let cs=0;function render(){draw('c0');draw('c1');draw('c2',cotSteps.slice(0,cs));document.getElementById('stp').textContent=cs;
+  document.getElementById('t0').textContent=' '+tok(blocks.c0);document.getElementById('t1').textContent=' '+tok(blocks.c1);
+  document.getElementById('t2').textContent=' '+(tok(blocks.c2)+cotSteps.slice(0,cs).reduce((s,t)=>s+t.length,0))}
+document.getElementById('run').onclick=()=>{if(cs>=cotSteps.length)cs=0;const t=setInterval(()=>{cs++;render();if(cs>=cotSteps.length)clearInterval(t)},700)};
+document.getElementById('reset').onclick=()=>{cs=0;render()};
+render();window.onresize=render;
+</script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 50-51 · Agent 评估框架 — eval harness 可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 50-51 · Agent 评估框架（eval harness）</h1>
+  <div class="sub">单步跑用例：看轨迹（工具序列）→ 亮 4 指标灯 → 裁判出质量分 → 汇成绩单</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>① 评估管线 <small>每点一下跑一条用例，4 指标可能各亮各的</small></h2>
+    <canvas id="pipe" width="1040" height="200"></canvas>
+    <div class="row">
+      <button id="step">▶ 跑下一条用例</button>
+      <button class="ghost" id="reset">重置</button>
+      <span class="stat" id="stat">0 / 3 用例 · 等待开始</span>
+    </div>
+    <p class="note">3 条用例真跑 Agent：成功率/工具选对率/步数效率机器秒判，质量分请第二个模型当裁判（LLM-judge）。</p>
+  </div>
+  <div class="card">
+    <h2>② 累计成绩单 <small>注意第3条：工具全对、答案却错 — 单指标必漏诊</small></h2>
+    <canvas id="board" width="1040" height="210"></canvas>
+  </div>
+</div>
+<script>
+// 每条用例=轨迹+4个判定（贴近 practice.py 真实跑出来的：3b 第3条多步会算错）
+const CASES=[
+ {goal:"3 加 5",   used:["add"],      ok:1,tool:1,eff:1.0,q:5},
+ {goal:"4 乘 6",   used:["mul"],      ok:1,tool:1,eff:1.0,q:5},
+ {goal:"2 乘3再加1",used:["mul","add"],ok:0,tool:1,eff:1.0,q:5},  // 工具对·答案错→只测成功率漏，只测工具误判过
+];
+let i=0;
+const pc=document.getElementById("pipe"),px=pc.getContext("2d");
+const bc=document.getElementById("board"),bx=bc.getContext("2d");
+function pipe(){
+  px.clearRect(0,0,1040,200); px.textAlign="center";
+  const cur=i>0?CASES[i-1]:null;
+  const cells=cur?[
+    {t:"工具序列",v:cur.used.join(">"),c:"#58a6ff"},
+    {t:"成功率",v:cur.ok?"对":"错",c:cur.ok?"#3fb950":"#da3633"},
+    {t:"工具选对",v:cur.tool?"对":"错",c:cur.tool?"#3fb950":"#da3633"},
+    {t:"步数效率",v:cur.eff.toFixed(1),c:"#3fb950"},
+    {t:"质量分",v:cur.q+"/5",c:"#f0883e"},
+  ]:[{t:"工具序列",v:"-"},{t:"成功率",v:"-"},{t:"工具选对",v:"-"},{t:"步数效率",v:"-"},{t:"质量分",v:"-"}];
+  const n=cells.length,bw=176,gap=(1040-n*bw)/(n+1);
+  for(let k=0;k<n;k++){const x=gap+k*(bw+gap),y=60,c=cur?cells[k].c:"#283143";
+    px.fillStyle=cur?c+"22":"#11161f";px.strokeStyle=c;px.lineWidth=2;
+    px.beginPath();px.roundRect(x,y,bw,80,10);px.fill();px.stroke();
+    px.fillStyle=cur?c:"#5b6675";px.font="bold 13px sans-serif";px.fillText(cells[k].t,x+bw/2,y+30);
+    px.fillStyle=cur?"#e6edf3":"#5b6675";px.font="bold 18px monospace";px.fillText(cells[k].v,x+bw/2,y+58);
+    if(k<n-1){px.strokeStyle="#283143";px.beginPath();px.moveTo(x+bw,y+40);px.lineTo(x+bw+gap,y+40);px.stroke();}}
+  px.fillStyle="#8b949e";px.font="12px sans-serif";px.textAlign="left";
+  px.fillText("前三灯机器自动判，质量分=LLM-as-judge；4 灯不一致才是常态——单看一个会误诊",16,180);
+}
+function board(){
+  bx.clearRect(0,0,1040,210);bx.textAlign="left";
+  const r=CASES.slice(0,i),ok=r.filter(c=>c.ok).length,tl=r.filter(c=>c.tool).length;
+  const eff=r.length?r.reduce((s,c)=>s+c.eff,0)/r.length:0,q=r.length?r.reduce((s,c)=>s+c.q,0)/r.length:0;
+  const M=[["任务成功率",r.length?ok/r.length:0,ok+"/"+r.length,"#3fb950"],
+           ["工具选对率",r.length?tl/r.length:0,tl+"/"+r.length,"#58a6ff"],
+           ["步数效率",eff,eff.toFixed(2),"#f0883e"],["平均质量",q/5,q.toFixed(1)+"/5","#da3633"]];
+  M.forEach((m,k)=>{const y=20+k*46;bx.fillStyle="#e6edf3";bx.font="13px sans-serif";bx.fillText(m[0],16,y+22);
+    bx.fillStyle="#11161f";bx.fillRect(140,y+8,760,20);bx.fillStyle=m[3];bx.fillRect(140,y+8,760*m[1],20);
+    bx.fillStyle="#e6edf3";bx.font="bold 13px monospace";bx.fillText(m[2],916,y+22);});
+  if(i===0){bx.fillStyle="#5b6675";bx.font="13px sans-serif";bx.fillText("点「跑下一条用例」累计成绩单…",16,200);}
+}
+function stat(){document.getElementById("stat").textContent=i+" / 3 用例 · "+(i>=3?"成绩单完成 ✅":i?"已判定":"等待开始");}
+function draw(){pipe();board();stat();}
+document.getElementById("step").onclick=()=>{if(i<CASES.length)i++;draw();};
+document.getElementById("reset").onclick=()=>{i=0;draw();};
+draw();
+</script>
+</body>
+</html>

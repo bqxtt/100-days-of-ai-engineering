@@ -1,0 +1,74 @@
+{
+  "learner_profile": {
+    "background": "后端开发工程师",
+    "ai_level": "有基础（了解 Transformer、Prompt Engineering，用过 API）",
+    "goal": "全面提升，成为 AI 全栈工程师",
+    "daily_time": "1小时",
+    "start_date": "2026-06-10",
+    "plan_duration_weeks": 20,
+    "total_days": 100
+  },
+  "progress": {
+    "current_phase": 5,
+    "current_day": 56,
+    "last_task_date": "2026-06-12",
+    "completed_days": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55],
+    "notes": [
+      "2026-06-10 Phase 1（Day 1-10）四件套全部生成并自验通过（practice.py 均 uv run 跑通、visualize.html JS 均 node --check 通过）。",
+      "2026-06-10 Phase 2（Day 11-20）四件套全部生成；LLM 练习已改为真连本地 Ollama qwen2.5:3b（chat/tool/stream/json），10/15 真跑通、html 语法通过。",
+      "2026-06-11 Phase 3（Day 21-35 RAG）四件套全部生成并自验通过：嵌入用 nomic-embed-text(768维)、生成用 qwen2.5:3b、numpy 余弦检索，15/15 practice 真跑通、visualize.html JS 全部 node --check 通过。",
+      "2026-06-12 Phase 4（Day 36-55 Agent）四件套全部生成并自验通过：纯 stdlib 手写 agent（不装 LangChain/CrewAI），真连 ollama qwen2.5:3b；覆盖 ReAct/LangGraph状态机/Tool设计/三层Memory/单与多Agent/MCP server/可观测trace/安全注入防御/评估harness/生产化容错。day-42=42-43、day-50=50-51、day-52=52-53 合并。17 folder 均 uv run 真跑通、html JS node --check 通过。下一步：Phase 5（Day 56-70 微调）。"
+    ]
+  },
+  "phases": [
+    {
+      "id": 1,
+      "name": "大模型核心原理",
+      "weeks": "1-2",
+      "days": "1-10",
+      "status": "completed"
+    },
+    {
+      "id": 2,
+      "name": "Prompt Engineering 与 LLM API 开发",
+      "weeks": "3-4",
+      "days": "11-20",
+      "status": "completed"
+    },
+    {
+      "id": 3,
+      "name": "RAG 系统设计与实现",
+      "weeks": "5-7",
+      "days": "21-35",
+      "status": "completed"
+    },
+    {
+      "id": 4,
+      "name": "AI Agent 开发",
+      "weeks": "8-11",
+      "days": "36-55",
+      "status": "completed"
+    },
+    {
+      "id": 5,
+      "name": "模型微调与训练",
+      "weeks": "12-14",
+      "days": "56-70",
+      "status": "not_started"
+    },
+    {
+      "id": 6,
+      "name": "AI 应用架构与工程化",
+      "weeks": "15-17",
+      "days": "71-85",
+      "status": "not_started"
+    },
+    {
+      "id": 7,
+      "name": "前沿方向与持续进化",
+      "weeks": "18-20",
+      "days": "86-100",
+      "status": "not_started"
+    }
+  ]
+}

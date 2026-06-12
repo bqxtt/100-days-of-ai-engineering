@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 32 · RAG 评估可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#f85149}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .chip{padding:6px 14px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  .qa{font-size:13px;margin:10px 0 0}
+  .qa b{color:var(--accent)} .qa .a{color:var(--fg)} .qa .c{color:var(--mut)}
+  .bars{display:grid;gap:12px;margin-top:6px}
+  .bar label{display:flex;justify-content:space-between;font-size:13px;color:var(--mut);margin-bottom:4px}
+  .track{height:14px;background:#0b0f15;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  .fill{height:100%;border-radius:7px;transition:width .5s, background .5s}
+  .val{font-variant-numeric:tabular-nums;font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:10px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 32 · RAG 质量三指标</h1>
+  <div class="sub">忠实度 Faithfulness · 答案相关 Answer Relevancy · 上下文相关 Context Relevancy</div>
+</header>
+<div class="wrap">
+  <div class="card full">
+    <div class="chips" id="chips">
+      <span class="chip on" data-i="0">✅ 好答案</span>
+      <span class="chip" data-i="1">🤥 编造答案</span>
+      <span class="chip" data-i="2">🎯 跑题答案</span>
+      <span class="chip" data-i="3">🔍 检索差</span>
+    </div>
+    <div class="qa" id="qa"></div>
+  </div>
+
+  <div class="card">
+    <h2>① 雷达图 <small>三轴张开=好 RAG，塌一角=有一段坏了</small></h2>
+    <canvas id="radar" height="300"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>② 指标条 <small>每根=裁判 LLM 打的一项分</small></h2>
+    <div class="bars">
+      <div class="bar"><label><span>Faithfulness 忠实度（没编）</span><span class="val" id="vf"></span></label><div class="track"><div class="fill" id="f"></div></div></div>
+      <div class="bar"><label><span>Answer Relevancy 答案相关（切题）</span><span class="val" id="va"></span></label><div class="track"><div class="fill" id="a"></div></div></div>
+      <div class="bar"><label><span>Context Relevancy 上下文相关（料对）</span><span class="val" id="vc"></span></label><div class="track"><div class="fill" id="c"></div></div></div>
+    </div>
+    <p class="note" id="diag"></p>
+  </div>
+</div>
+<script>
+const D=[
+ {n:"好答案",q:"Acme 成立于哪一年？",a:"Acme 成立于 2021 年。",c:"Acme 公司成立于 2021 年，总部杭州。",f:1,ar:1,cr:1,d:"三轴全张开：照料、切题、料对——理想 RAG。"},
+ {n:"编造答案",q:"Acme 成立于哪一年？",a:"成立于 2021 年，有 500 名员工。",c:"Acme 公司成立于 2021 年，总部杭州。",f:.5,ar:1,cr:1,d:"塌 Faithfulness：员工数料里没有=幻觉，半句被支持。"},
+ {n:"跑题答案",q:"Acme 成立于哪一年？",a:"Acme 是一家做 RAG 的公司，建议你多喝水。",c:"Acme 公司成立于 2021 年，总部杭州。",f:1,ar:.2,cr:1,d:"塌 Answer Relevancy：忠实但没正面答年份=跑题。"},
+ {n:"检索差",q:"Acme 成立于哪一年？",a:"资料里没提到成立年份。",c:"今天天气晴朗，适合出门散步。",f:1,ar:.5,cr:.1,d:"塌 Context Relevancy：检索回噪声=检索端拉胯，先修检索。"},
+];
+let cur=0;
+const radar=document.getElementById('radar'),rx=radar.getContext('2d');
+const col=v=>v>.7?'#3fb950':v>.4?'#f0883e':'#f85149';
+function bars(d){const set=(b,t,v)=>{const e=document.getElementById(b);e.style.width=(v*100)+'%';e.style.background=col(v);document.getElementById(t).textContent=v.toFixed(2);};set('f','vf',d.f);set('a','va',d.ar);set('c','vc',d.cr);}
+function drawRadar(d){const w=radar.clientWidth,h=radar.clientHeight;radar.width=w*2;radar.height=h*2;rx.scale(2,2);rx.clearRect(0,0,w,h);
+  const cx=w/2,cy=h/2,R=Math.min(w,h)/2-44,ax=[d.f,d.ar,d.cr],lab=['Faithfulness','Answer Rel.','Context Rel.'];
+  for(let g=1;g<=4;g++){rx.strokeStyle='#283143';rx.beginPath();for(let i=0;i<3;i++){const an=-Math.PI/2+i*2*Math.PI/3,r=R*g/4;const x=cx+r*Math.cos(an),y=cy+r*Math.sin(an);i?rx.lineTo(x,y):rx.moveTo(x,y)}rx.closePath();rx.stroke();}
+  rx.strokeStyle='#283143';for(let i=0;i<3;i++){const an=-Math.PI/2+i*2*Math.PI/3;rx.beginPath();rx.moveTo(cx,cy);rx.lineTo(cx+R*Math.cos(an),cy+R*Math.sin(an));rx.stroke();}
+  rx.fillStyle='rgba(88,166,255,.25)';rx.strokeStyle='#58a6ff';rx.lineWidth=2;rx.beginPath();ax.forEach((v,i)=>{const an=-Math.PI/2+i*2*Math.PI/3,r=R*v;const x=cx+r*Math.cos(an),y=cy+r*Math.sin(an);i?rx.lineTo(x,y):rx.moveTo(x,y)});rx.closePath();rx.fill();rx.stroke();
+  ax.forEach((v,i)=>{const an=-Math.PI/2+i*2*Math.PI/3,r=R*v;rx.fillStyle=col(v);rx.beginPath();rx.arc(cx+r*Math.cos(an),cy+r*Math.sin(an),5,0,7);rx.fill();});
+  rx.fillStyle='#8b949e';rx.font='12px sans-serif';rx.textAlign='center';lab.forEach((t,i)=>{const an=-Math.PI/2+i*2*Math.PI/3;rx.fillText(t,cx+(R+24)*Math.cos(an),cy+(R+24)*Math.sin(an)+4);});}
+function render(){const d=D[cur];document.getElementById('qa').innerHTML=`<b>问：</b>${d.q}<br><span class="a">答：${d.a}</span><br><span class="c">料：${d.c}</span>`;document.getElementById('diag').textContent='👉 '+d.d;bars(d);drawRadar(d);}
+document.getElementById('chips').onclick=e=>{if(!e.target.dataset.i)return;cur=+e.target.dataset.i;document.querySelectorAll('#chips .chip').forEach(c=>c.classList.toggle('on',+c.dataset.i===cur));render();};
+render();window.onresize=()=>drawRadar(D[cur]);
+</script>
+</body>
+</html>

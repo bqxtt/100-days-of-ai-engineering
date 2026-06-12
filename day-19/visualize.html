@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 19 · 生产化：限流 / 重试 / 成本</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#f85149}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 19 · 生产化三件套</h1>
+  <div class="sub">令牌桶限流 → 429指数退避 → 成本累计，全是后端最熟的活</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 令牌桶限流 <small>令牌按速率滴入，桶空就排队</small></h2>
+    <canvas id="bucket" height="220"></canvas>
+    <div class="row">
+      <button id="bsend">▶ 发请求</button>
+      <label>RPM <span class="stat" id="rpmv">60</span></label>
+      <input type="range" id="rpm" min="6" max="180" step="6" value="60" style="width:160px">
+      <span>排队 <span class="stat" id="qn">0</span></span>
+    </div>
+    <p class="note">连点发请求：有令牌秒发(绿)，没令牌排队(橙)。RPM 越低桶越快空。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 重试退避时间线 <small>429 后等待指数变长 + 抖动</small></h2>
+    <canvas id="retry" height="220"></canvas>
+    <div class="row">
+      <button id="rrun">▶ 触发429</button>
+      <button id="rreset" class="ghost">重置</button>
+      <label>jitter <input type="checkbox" id="jit" checked></label>
+    </div>
+    <p class="note">每次重试等待≈2^n，抖动错开惊群。关掉 jitter 看条形对齐=同步回流。</p>
+  </div>
+
+  <div class="card full">
+    <h2>③ 成本累计 <small>token×单价，缓存命中把曲线压平</small></h2>
+    <canvas id="cost" height="200"></canvas>
+    <div class="row">
+      <button id="ccall">▶ 调用一次</button>
+      <button id="creset" class="ghost">重置</button>
+      <label>缓存命中 <input type="checkbox" id="cache" checked></label>
+      <span>累计 <span class="stat" id="total">$0.0000</span></span>
+    </div>
+    <p class="note">Opus 4.8: 入$5/出$25 每百万。缓存读约0.1倍——同样请求开缓存曲线明显更缓。</p>
+  </div>
+</div>
+<script>
+// ---------- ① 令牌桶 ----------
+const bc=document.getElementById('bucket'),rpmEl=document.getElementById('rpm');
+let cap=10, tokens=10, queue=0, flashes=[];
+function fit(c){c.width=c.clientWidth*2;c.height=c.clientHeight*2;const x=c.getContext('2d');x.scale(2,2);return x}
+function rate(){return (+rpmEl.value)/60}
+let lastT=performance.now();
+function drawBucket(){const x=fit(bc),w=bc.clientWidth,h=bc.clientHeight;cap=Math.max(2,Math.round(+rpmEl.value/6));
+  const now=performance.now();tokens=Math.min(cap,tokens+(now-lastT)/1000*rate());lastT=now;
+  x.clearRect(0,0,w,h);
+  // 桶
+  const bx=w/2-40,bw=80,bh=140,by=40;x.strokeStyle='#283143';x.lineWidth=2;x.strokeRect(bx,by,bw,bh);
+  const fill=tokens/cap;x.fillStyle='#1f6feb';x.fillRect(bx+2,by+bh-(bh-4)*fill,bw-4,(bh-4)*fill);
+  x.fillStyle='#e6edf3';x.font='13px sans-serif';x.fillText(`令牌 ${tokens.toFixed(1)}/${cap}`,bx,by-10);
+  x.fillStyle='#8b949e';x.fillText(`滴入 ${rate().toFixed(2)}/s`,bx,by+bh+22);
+  flashes=flashes.filter(f=>now-f.t<700);flashes.forEach(f=>{x.globalAlpha=1-(now-f.t)/700;x.fillStyle=f.ok?'#3fb950':'#f0883e';x.beginPath();x.arc(f.x,160,8,0,7);x.fill();x.globalAlpha=1});
+  document.getElementById('qn').textContent=queue;requestAnimationFrame(drawBucket)}
+document.getElementById('bsend').onclick=()=>{if(tokens>=1){tokens-=1;flashes.push({t:performance.now(),x:60,ok:true})}else{queue++;flashes.push({t:performance.now(),x:60,ok:false});setTimeout(()=>{queue=Math.max(0,queue-1)},(1/rate())*1000)}};
+rpmEl.oninput=()=>document.getElementById('rpmv').textContent=rpmEl.value;
+
+// ---------- ② 重试退避 ----------
+const rc=document.getElementById('retry');let bars=[];
+function drawRetry(){const x=fit(rc),w=rc.clientWidth,h=rc.clientHeight;x.clearRect(0,0,w,h);x.strokeStyle='#283143';x.strokeRect(0,0,w,h);
+  let t=0;bars.forEach((d,i)=>{const x0=20+t/12;const bw=d/12;const y=20+i*30;x.fillStyle=i<bars.length-1?'#f0883e':'#3fb950';x.fillRect(x0,y,Math.max(8,bw),18);x.fillStyle='#e6edf3';x.font='12px sans-serif';x.fillText(i<bars.length-1?`429 等${d.toFixed(0)}ms`:`200 成功`,x0+4,y+14);t+=d});
+  x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText('→ 时间(指数变长)',20,h-10)}
+function trigger(){bars=[];let base=200,cap=4000;for(let n=0;n<5;n++){let d=Math.min(cap,base*2**n);if(document.getElementById('jit').checked)d+=Math.random()*200;bars.push(d)}bars.push(0);drawRetry()}
+document.getElementById('rrun').onclick=trigger;
+document.getElementById('rreset').onclick=()=>{bars=[];drawRetry()};
+
+// ---------- ③ 成本累计 ----------
+const cc=document.getElementById('cost');let hist=[0],total=0;
+const P={in:5,out:25,cr:0.5};
+function drawCost(){const x=fit(cc),w=cc.clientWidth,h=cc.clientHeight;x.clearRect(0,0,w,h);x.strokeStyle='#283143';x.strokeRect(0,0,w,h);
+  const mx=Math.max(0.5,...hist);x.strokeStyle='#3fb950';x.lineWidth=2;x.beginPath();hist.forEach((v,i)=>{const px=i/30*w,py=h-Math.min(h-6,v/mx*(h-20))-6;i?x.lineTo(px,py):x.moveTo(px,py)});x.stroke();
+  x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText('$ 累计成本',8,16);document.getElementById('total').textContent='$'+total.toFixed(4)}
+document.getElementById('ccall').onclick=()=>{const cache=document.getElementById('cache').checked;const ni=cache?2000:50000,cr=cache?48000:0;total+=ni/1e6*P.in+2000/1e6*P.out+cr/1e6*P.cr;hist.push(total);if(hist.length>31)hist.shift();drawCost()};
+document.getElementById('creset').onclick=()=>{hist=[0];total=0;drawCost()};
+
+drawBucket();drawRetry();drawCost();window.onresize=()=>{drawRetry();drawCost()};
+</script>
+</body>
+</html>

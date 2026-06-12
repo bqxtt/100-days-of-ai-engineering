@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 14 · Tool Use 回路可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--pink:#db61a2}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1.25fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  label{color:var(--mut);font-size:13px;display:flex;align-items:center;gap:6px}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  pre{margin:0;background:#0b0f15;border:1px solid var(--line);border-radius:8px;padding:12px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#9bd1ff;white-space:pre-wrap;word-break:break-all;min-height:300px}
+  .lbl{color:var(--warn);font-size:12px;margin:10px 0 4px}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 14 · 模型如何调用外部工具</h1>
+  <div class="sub">模型只发 tool_use，后端执行回填 tool_result，来回循环 → 看清整条回路</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>① Tool Use 回路 <small>模型 ↔ 工具，单击逐步推进</small></h2>
+    <canvas id="cv" height="300"></canvas>
+    <div class="row">
+      <button id="step">▶ 下一步</button>
+      <button id="reset" class="ghost">重置</button>
+      <label><input type="checkbox" id="par" checked> 并行两工具</label>
+      <span>阶段 <span class="stat" id="phase">user 提问</span></span>
+    </div>
+    <p class="note">模型本身不查天气/不算术，它只输出 tool_use 申请；执行在你后端，结果包成 tool_result 回填。end_turn 才结束。</p>
+  </div>
+  <div class="card">
+    <h2>② 这一轮在传的 JSON <small>tools / tool_use / tool_result</small></h2>
+    <div class="lbl" id="jlbl">tools 定义（发给模型）</div>
+    <pre id="json"></pre>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+function fit(){cv.width=cv.clientWidth*2;cv.height=cv.clientHeight*2;ctx.setTransform(2,0,0,2,0,0)}
+const SCHEMA=[{name:"get_weather",description:"查某城市当前气温",input_schema:{type:"object",properties:{city:{type:"string"}},required:["city"]}},{name:"calculator",description:"做一次算术运算",input_schema:{type:"object",properties:{expr:{type:"string"}},required:["expr"]}}];
+const STEPS=[
+ {phase:"user 提问",lbl:"tools 定义（发给模型）",j:SCHEMA},
+ {phase:"模型决定调用",lbl:"assistant 输出 tool_use",j:[{type:"text",text:"我得查天气并算个数"},{type:"tool_use",id:"t1",name:"get_weather",input:{city:"北京"}},{type:"tool_use",id:"t2",name:"calculator",input:{expr:"26*9/5+32"}}]},
+ {phase:"后端执行工具",lbl:"本地真正跑函数",j:{"get_weather":{temp_c:26},"calculator":{result:78.8}}},
+ {phase:"tool_result 回填",lbl:"user 角色回填结果",j:[{type:"tool_result",tool_use_id:"t1",content:'{"temp_c":26}'},{type:"tool_result",tool_use_id:"t2",content:'{"result":78.8}'}]},
+ {phase:"模型最终回答",lbl:"end_turn 收尾",j:[{type:"text",text:"北京26°C≈78.8°F"}]}];
+let s=0;
+function node(x,y,w,h,c,t,on){ctx.globalAlpha=on?1:.4;ctx.fillStyle="#0b0f15";ctx.strokeStyle=c;ctx.lineWidth=on?2.5:1;ctx.beginPath();ctx.roundRect(x,y,w,h,10);ctx.fill();ctx.stroke();ctx.fillStyle=c;ctx.font="bold 13px sans-serif";ctx.textAlign="center";ctx.fillText(t,x+w/2,y+h/2+5);ctx.globalAlpha=1}
+function arrow(x1,y,x2,c,on){ctx.globalAlpha=on?1:.25;ctx.strokeStyle=c;ctx.lineWidth=on?3:1.5;ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();const d=x2>x1?-1:1;ctx.beginPath();ctx.moveTo(x2,y);ctx.lineTo(x2+d*8,y-5);ctx.lineTo(x2+d*8,y+5);ctx.fill?ctx.fillStyle=c:0;ctx.fill();ctx.globalAlpha=1}
+function draw(){fit();const w=cv.clientWidth,h=cv.clientHeight;ctx.clearRect(0,0,w,h);const par=document.getElementById('par').checked;
+ node(40,h/2-30,150,60,"#58a6ff","🧠 模型",s>=0);node(w-190,h/2-90,150,52,"#3fb950","🛠 get_weather",s>=2);if(par)node(w-190,h/2+38,150,52,"#3fb950","🛠 calculator",s>=2);
+ const mids=[h/2-64,h/2+64];const tx=[mid=>mids[0]];
+ arrow(190,h/2-30,w-190,"#f0883e",s===1);if(par)arrow(190,h/2+30,w-190,"#f0883e",s===1);
+ arrow(w-190,h/2-10,190,"#db61a2",s===3);if(par)arrow(w-190,h/2+54,190,"#db61a2",s===3);
+ ctx.fillStyle="#8b949e";ctx.font="11px monospace";ctx.textAlign="center";ctx.fillText("tool_use →",w/2,h/2-40);ctx.fillText("← tool_result",w/2,h/2+90);
+ const st=STEPS[s];document.getElementById('phase').textContent=st.phase;document.getElementById('jlbl').textContent=st.lbl;
+ const j=(s===1&&!par)?st.j.slice(0,2):(s===3&&!par)?[st.j[0]]:st.j;document.getElementById('json').textContent=JSON.stringify(j,null,2)}
+document.getElementById('step').onclick=()=>{s=(s+1)%STEPS.length;draw()};
+document.getElementById('reset').onclick=()=>{s=0;draw()};
+document.getElementById('par').onchange=draw;
+window.onresize=draw;draw();
+</script>
+</body>
+</html>

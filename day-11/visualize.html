@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 11 · LLM 采样参数可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  .lvl{color:var(--warn)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 11 · 拖旋钮看采样怎么塑形</h1>
+  <div class="sub">temperature 把分布变尖/变平 → top_p 砍长尾 → 看 1000 次采样落点</div>
+</header>
+<div class="wrap">
+
+  <div class="card full">
+    <h2>① 概率分布 <small>logits→softmax 后，每个词被选中的概率。灰=被 top_p 砍掉</small></h2>
+    <canvas id="dist" height="220"></canvas>
+    <div class="row">
+      <label>temperature <span class="lvl" id="tv">1.00</span></label>
+      <input type="range" id="temp" min="0.1" max="2" step="0.05" value="1" style="width:200px">
+      <label>top_p <span class="lvl" id="pv">1.00</span></label>
+      <input type="range" id="topp" min="0.05" max="1" step="0.05" value="1" style="width:200px">
+      <span>保留词数 <span class="stat" id="keep">6</span></span>
+    </div>
+    <p class="note">温度低→一柱独大（确定）；温度高→大家拉平（随机）。top_p 小→只剩头部几词，长尾归零。</p>
+  </div>
+
+  <div class="card full">
+    <h2>② 1000 次采样 <small>按上面分布抽 1000 次，看真实落点</small></h2>
+    <canvas id="bars" height="180"></canvas>
+    <div class="row">
+      <button id="run">▶ 采样 1000 次</button>
+      <button id="reset" class="ghost">重置</button>
+      <span>选中最高 <span class="stat" id="best">—</span></span>
+    </div>
+    <p class="note">temp=0.2 几乎只命中第一个词；temp=1.8 五花八门。这就是"创造力旋钮"。</p>
+  </div>
+</div>
+<script>
+const VOCAB=["简洁","详细","代码","诗歌","废话","emoji"];
+const LOGITS=[3.0,2.0,1.5,0.5,-1.0,-2.0];
+let temp=1, topp=1, freq=[0,0,0,0,0,0];
+const dc=document.getElementById('dist'),bc=document.getElementById('bars');
+function clear(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+function softmax(z){const m=Math.max(...z),e=z.map(v=>Math.exp(v-m)),s=e.reduce((a,b)=>a+b,0);return e.map(v=>v/s)}
+function probs(){
+  const p=softmax(LOGITS.map(v=>v/temp));
+  const idx=p.map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]);
+  let c=0;const keep=new Set();
+  for(const[v,i]of idx){keep.add(i);c+=v;if(c>=topp)break;}
+  const out=p.map((v,i)=>keep.has(i)?v:0),s=out.reduce((a,b)=>a+b,0);
+  return out.map(v=>v/s);
+}
+function drawDist(){const x=clear(dc),w=dc.clientWidth,h=dc.clientHeight,p=probs();const bw=w/VOCAB.length,k=p.filter(v=>v>0).length;
+  document.getElementById('keep').textContent=k;
+  p.forEach((v,i)=>{const bh=v*(h-30);x.fillStyle=v>0?'#58a6ff':'#283143';x.fillRect(i*bw+10,h-bh-20,bw-20,bh||2);
+    x.fillStyle='#e6edf3';x.font='12px sans-serif';x.textAlign='center';x.fillText(VOCAB[i],i*bw+bw/2,h-5);
+    x.fillStyle='#8b949e';x.fillText(v.toFixed(2),i*bw+bw/2,h-bh-26)})}
+function drawBars(){const x=clear(bc),w=bc.clientWidth,h=bc.clientHeight,bw=w/VOCAB.length,mx=Math.max(...freq,1);
+  freq.forEach((c,i)=>{const bh=c/mx*(h-26);x.fillStyle='#3fb950';x.fillRect(i*bw+10,h-bh-18,bw-20,bh||1);
+    x.fillStyle='#8b949e';x.font='11px sans-serif';x.textAlign='center';x.fillText(c,i*bw+bw/2,h-bh-22);
+    x.fillStyle='#e6edf3';x.fillText(VOCAB[i],i*bw+bw/2,h-4)})}
+function runSample(){const p=probs(),cum=[];let s=0;p.forEach(v=>{s+=v;cum.push(s)});freq=[0,0,0,0,0,0];
+  for(let n=0;n<1000;n++){const r=Math.random();for(let i=0;i<cum.length;i++)if(r<=cum[i]){freq[i]++;break}}
+  document.getElementById('best').textContent=VOCAB[freq.indexOf(Math.max(...freq))]+' '+Math.max(...freq)+'/1000';drawBars()}
+const tr=document.getElementById('temp'),pr=document.getElementById('topp');
+tr.oninput=()=>{temp=+tr.value;document.getElementById('tv').textContent=temp.toFixed(2);drawDist()};
+pr.oninput=()=>{topp=+pr.value;document.getElementById('pv').textContent=topp.toFixed(2);drawDist()};
+document.getElementById('run').onclick=runSample;
+document.getElementById('reset').onclick=()=>{freq=[0,0,0,0,0,0];document.getElementById('best').textContent='—';drawBars()};
+drawDist();drawBars();window.onresize=()=>{drawDist();drawBars()};
+</script>
+</body>
+</html>

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 28 · 基础 RAG Pipeline（下）可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--dim:#3a4150}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+  button{background:var(--accent);color:#06121f;border:0;padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chip{padding:6px 13px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  label{color:var(--mut);font-size:13px}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .stage{color:var(--warn);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 28 · 基础 RAG（下）：检索 → 拼 prompt → 生成 → 引用</h1>
+  <div class="sub">一条完整 RAG 流水线在你眼前跑：选个问题，看它怎么查库、拼 context、带引用生成</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <div class="row">
+      <span class="chip on" data-q="0">食堂几点开饭？</span>
+      <span class="chip" data-q="1">报销发票几天内交？</span>
+      <span class="chip" data-q="2">VPN 密码多久换？</span>
+      <span class="chip" data-q="3">公司养了几只猫？（库里没有）</span>
+    </div>
+    <div class="row">
+      <button id="run">▶ 跑一遍 RAG</button>
+      <button id="step" class="ghost">单步</button>
+      <button id="reset" class="ghost">重置</button>
+      <span class="stage" id="stage">就绪 · 点「跑一遍」</span>
+    </div>
+    <canvas id="cv" height="430"></canvas>
+    <p class="note">阶段：① 问题嵌入 → ② 和 5 条库逐条算相似度、top-2 高亮 → ③ 命中编号塞进 context 拼 prompt → ④ 逐字生成带 [1][2] 引用。最高分太低则触发"资料中未提及"防幻觉兜底。</p>
+  </div>
+</div>
+<script>
+const KB=[
+ "食堂午餐 11:30–13:00，补贴 8 元，刷工牌结算",
+ "报销：OA→财务→新建报销单，发票消费后 30 天内交",
+ "年假每年 15 天，满一年可休，不结转",
+ "VPN 由 IT 分配，远程必连，密码 90 天换一次",
+ "门禁卡丢失 24h 内前台挂失，补办 20 元"];
+// 每问对 5 条库的相似度（模拟，含一条阈值不达的“猫”）；ans=最终带引用答案
+const Q=[
+ {q:"食堂几点开饭？",  s:[.85,.45,.40,.51,.44], ans:"根据资料 [1]，食堂午餐时间为 11:30–13:00。"},
+ {q:"报销发票几天内交？",s:[.43,.69,.41,.39,.63], ans:"根据资料 [1]，发票需在消费后 30 天内提交。"},
+ {q:"VPN 密码多久换？", s:[.39,.42,.40,.57,.41], ans:"根据资料 [1]，VPN 密码每 90 天强制更换。"},
+ {q:"公司养了几只猫？", s:[.41,.40,.45,.42,.43], ans:"资料中未提及（防幻觉兜底）。"}];
+let qi=0,stage=0,prog=0,running=false,top=[];
+const cv=document.getElementById('cv'),x=cv.getContext('2d');
+const stageName=["就绪","① 问题嵌入向量","② 检索 top-2 相似度","③ 拼 context 装 prompt","④ 生成带引用"];
+function fit(){cv.width=cv.clientWidth*2;cv.height=860;x.setTransform(2,0,0,2,0,0)}
+function setStage(s){stage=s;prog=0;document.getElementById('stage').textContent=stageName[s]}
+function computeTop(){const o=KB.map((d,i)=>({i,s:Q[qi].s[i]})).sort((a,b)=>b.s-a.s);top=o.slice(0,2).map(o=>o.i)}
+function draw(){const W=cv.clientWidth;x.clearRect(0,0,W,430);
+  // 问题框
+  x.fillStyle="#1f2733";x.fillRect(16,14,W-32,40);x.fillStyle="#fff";x.font="14px sans-serif";
+  x.fillText("❓ "+Q[qi].q, 28, 39);
+  if(stage>=1){x.fillStyle="#58a6ff";x.font="12px sans-serif";x.fillText("→ embed 向量",W-150,39)}
+  // 5 条库
+  const top2=top, max=.50;
+  for(let i=0;i<5;i++){const y=72+i*46, on=stage>=2&&top2.includes(i), sc=Q[qi].s[i];
+    x.fillStyle=on?"#13351f":"#11161d";x.strokeStyle=on?"#3fb950":"#283143";x.lineWidth=on?2:1;
+    x.fillRect(16,y,W-180,38);x.strokeRect(16,y,W-180,38);
+    x.fillStyle=on?"#3fb950":"#8b949e";x.font="13px sans-serif";x.fillText("["+(i+1)+"] "+KB[i],28,y+24);
+    if(stage>=2){const bw=(W-180)-300,vis=Math.min(1,prog), s=sc*vis;x.fillStyle="#283143";x.fillRect(W-300,y+22,bw*0,8);
+      x.fillStyle=on?"#3fb950":"#3a4150";x.fillRect(W-156,y,4,38); // accent strip
+      x.fillStyle=on?"#3fb950":"#8b949e";x.font="12px sans-serif";x.fillText("sim "+(s).toFixed(2),W-148,y+24)}}
+  // context + prompt
+  const cy=308;
+  if(stage>=3){x.fillStyle="#16202c";x.strokeStyle="#1f6feb";x.fillRect(16,cy,W-32,54);x.strokeRect(16,cy,W-32,54);
+    x.fillStyle="#58a6ff";x.font="12px sans-serif";x.fillText("📄 context（只塞 top-2）→ prompt：只照资料答，标 [编号]，没有就说未提及",28,cy+18);
+    x.fillStyle="#c9d4e3";x.fillText("[1] "+KB[top[0]].slice(0,30),28,cy+38);}
+  // 生成答案
+  const ay=378;
+  if(stage>=4){const a=Q[qi].ans,n=Math.floor(a.length*Math.min(1,prog));
+    x.fillStyle="#0f2a18";x.strokeStyle="#3fb950";x.fillRect(16,ay,W-32,40);x.strokeRect(16,ay,W-32,40);
+    x.fillStyle="#3fb950";x.font="14px sans-serif";x.fillText("🤖 "+a.slice(0,n)+(n<a.length?"▌":""),28,ay+25)}
+}
+function tick(){if(!running)return;prog+=stage===4?0.04:0.06;if(prog>=1){if(stage<4)setStage(stage+1);else{running=false;document.getElementById('run').textContent="▶ 跑一遍 RAG"}}draw();requestAnimationFrame(tick)}
+function go(){computeTop();setStage(1);running=true;document.getElementById('run').textContent="⏸ 运行中";tick()}
+function one(){if(!top.length)computeTop();if(stage<4){setStage(stage+1);prog=1;draw()}}
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{document.querySelectorAll('.chip').forEach(o=>o.classList.remove('on'));c.classList.add('on');qi=+c.dataset.q;running=false;setStage(0);top=[];document.getElementById('run').textContent="▶ 跑一遍 RAG";draw()});
+document.getElementById('run').onclick=()=>{if(running){running=false;document.getElementById('run').textContent="▶ 跑一遍 RAG"}else go()};
+document.getElementById('step').onclick=one;
+document.getElementById('reset').onclick=()=>{running=false;setStage(0);top=[];document.getElementById('run').textContent="▶ 跑一遍 RAG";draw()};
+fit();computeTop();draw();window.onresize=()=>{fit();draw()};
+</script>
+</body>
+</html>

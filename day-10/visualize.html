@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 10 · 简化版 Attention 可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--hot:#ff6b6b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 10 · 一个 mini 自注意力 block 的前向流程</h1>
+  <div class="sub">输入 token → Q/K/V → 注意力权重热图 → 加权聚合输出，全程能动手玩</div>
+</header>
+<div class="wrap">
+
+  <div class="card full">
+    <h2>① 前向流程 <small>token → QKV → softmax(Q·Kᵀ/√d)·V → 输出</small></h2>
+    <canvas id="flow" height="220"></canvas>
+    <div class="row">
+      <button id="step">▶ 单步推进</button>
+      <button id="reset" class="ghost">重置数据</button>
+      <div class="chips" id="head">
+        <span class="chip on" data-h="0">Head 0</span>
+        <span class="chip" data-h="1">Head 1</span>
+      </div>
+      <label><input type="checkbox" id="mask"> 因果掩码 Causal Mask</label>
+    </div>
+    <p class="note">点「单步推进」依次点亮：嵌入 → 算 QKV → 算权重 → 加权出输出。勾选掩码看权重变下三角（只能看左边）。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 注意力权重热图 <small>行=谁在看 列=被看 越亮越关注</small></h2>
+    <canvas id="heat" height="240"></canvas>
+    <p class="note">悬停某一行看它把权重分给了谁；每行和=1。掩码下上三角全黑（看不到未来）。</p>
+  </div>
+
+  <div class="card">
+    <h2>③ 一个 token 看全场 <small>悬停热图选行，这里画它的加权连线</small></h2>
+    <canvas id="focus" height="240"></canvas>
+    <p class="note">第 i 个 token 用权重对所有 token 的 V 加权求和，得到「看过上下文」的新表示。</p>
+  </div>
+</div>
+<script>
+// ---------- mini attention 数据 ----------
+const S=4, D=8, H=2, dh=D/H;                 // 4 token, d_model=8, 2 头
+const toks=['猫','坐','在','垫'];
+let Emb,Wq,Wk,Wv,X,Q,K,Vv,W=[[],[]],stage=0,head=0,causal=false,hoverRow=-1;
+const rnd=()=>Math.random()*2-1;
+function mat(r,c){return Array.from({length:r},()=>Array.from({length:c},rnd))}
+function mm(A,B){return A.map(r=>B[0].map((_,j)=>r.reduce((s,_,k)=>s+r[k]*B[k][j],0)))}
+function reset(){Emb=mat(S,D);Wq=mat(D,D);Wk=mat(D,D);Wv=mat(D,D);X=Emb;Q=mm(X,Wq);K=mm(X,Wk);Vv=mm(X,Wv);compute();stage=0;draw()}
+function compute(){for(let h=0;h<H;h++){W[h]=[];for(let i=0;i<S;i++){const sc=[];for(let j=0;j<S;j++){let s=0;for(let k=0;k<dh;k++)s+=Q[i][h*dh+k]*K[j][h*dh+k];sc.push(causal&&j>i?-1e9:s/Math.sqrt(dh))}const m=Math.max(...sc),e=sc.map(v=>Math.exp(v-m)),z=e.reduce((a,b)=>a+b,0);W[h].push(e.map(v=>v/z))}}}
+// ---------- canvas helpers ----------
+function clear(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+const fc=document.getElementById('flow'),hc=document.getElementById('heat'),focc=document.getElementById('focus');
+// ---------- flow diagram ----------
+function drawFlow(){const x=clear(fc),w=fc.clientWidth,h=fc.clientHeight;const cols=['tokens','Embed X','Q / K / V','softmax(QKᵀ/√d)','输出 out'];const cx=cols.map((_,i)=>40+i*(w-80)/4);
+  for(let i=0;i<S;i++){const ty=30+i*(h-50)/S;const on=stage>=0;x.fillStyle=on?'#1f6feb':'#222';x.fillRect(cx[0]-18,ty,36,22);x.fillStyle='#fff';x.font='12px sans-serif';x.textAlign='center';x.fillText(toks[i],cx[0],ty+15)}
+  for(let s=1;s<5;s++){const lit=stage>=s;x.globalAlpha=lit?1:.25;for(let i=0;i<S;i++){const ty=30+i*(h-50)/S+11;x.strokeStyle=['#58a6ff','#3fb950','#f0883e','#ff6b6b'][s-1];x.lineWidth=lit?2:1;x.beginPath();x.moveTo(cx[s-1]+18,ty);x.lineTo(cx[s]-18,ty);x.stroke();x.fillStyle=lit?'#222b3a':'#161b22';x.fillRect(cx[s]-18,ty-11,36,22)}x.globalAlpha=1}
+  x.fillStyle='#8b949e';x.font='11px sans-serif';x.textAlign='center';cols.forEach((c,i)=>x.fillText(c,cx[i],h-8))}
+// ---------- heatmap ----------
+let cellG=[];
+function drawHeat(){const x=clear(hc),w=hc.clientWidth,h=hc.clientHeight,pad=40,g=Math.min(w,h)-pad-10,cw=g/S;cellG=[];
+  x.fillStyle='#8b949e';x.font='11px sans-serif';x.textAlign='center';
+  for(let i=0;i<S;i++){x.fillText(toks[i],pad-16,pad+i*cw+cw/2+4);x.fillText(toks[i],pad+i*cw+cw/2,pad-14)}
+  for(let i=0;i<S;i++)for(let j=0;j<S;j++){const v=stage>=3?W[head][i][j]:0;x.fillStyle=`rgba(${88+v*150},${100+v*60},${40+v*30},${.15+v*.85})`;x.fillRect(pad+j*cw,pad+i*cw,cw-2,cw-2);if(i===hoverRow){x.strokeStyle='#ff6b6b';x.strokeRect(pad+j*cw,pad+i*cw,cw-2,cw-2)}x.fillStyle='#cdd9e5';x.fillText(v.toFixed(2),pad+j*cw+cw/2,pad+i*cw+cw/2+4);cellG.push({i,x0:pad+j*cw,y0:pad+i*cw,cw})}}
+hc.onmousemove=e=>{const r=hc.getBoundingClientRect();const mx=(e.clientX-r.left),my=(e.clientY-r.top);hoverRow=-1;cellG.forEach(c=>{if(mx>c.x0&&mx<c.x0+c.cw&&my>c.y0&&my<c.y0+c.cw)hoverRow=c.i});draw()};
+hc.onmouseleave=()=>{hoverRow=-1;draw()};
+// ---------- focus token ----------
+function drawFocus(){const x=clear(focc),w=focc.clientWidth,h=focc.clientHeight;const i=hoverRow<0?0:hoverRow;const lx=60,rx=w-60;
+  x.fillStyle='#8b949e';x.font='12px sans-serif';x.textAlign='center';x.fillText('token「'+toks[i]+'」',lx,20);x.fillText('看向 V',rx,20);
+  const qy=30+i*(h-50)/S;x.fillStyle='#ff6b6b';x.beginPath();x.arc(lx,qy+(h-50)/S/2+20,10,0,7);x.fill();
+  for(let j=0;j<S;j++){const ty=30+j*(h-50)/S+20,c=(h-50)/S/2,wv=stage>=3?W[head][i][j]:0;x.strokeStyle='#3fb950';x.globalAlpha=.2+wv*.8;x.lineWidth=1+wv*6;x.beginPath();x.moveTo(lx+10,qy+c);x.lineTo(rx-12,ty+c);x.stroke();x.globalAlpha=1;x.fillStyle='#1f6feb';x.fillRect(rx-12,ty,24,c*2-6);x.fillStyle='#fff';x.fillText(toks[j],rx,ty+c+4)}}
+function draw(){drawFlow();drawHeat();drawFocus()}
+// ---------- controls ----------
+document.getElementById('step').onclick=()=>{stage=(stage+1)%5;draw()};
+document.getElementById('reset').onclick=reset;
+document.getElementById('mask').onchange=e=>{causal=e.target.checked;compute();draw()};
+document.getElementById('head').onclick=e=>{if(!e.target.dataset.h)return;head=+e.target.dataset.h;document.querySelectorAll('#head .chip').forEach(c=>c.classList.toggle('on',+c.dataset.h===head));draw()};
+reset();stage=4;draw();window.onresize=draw;
+</script>
+</body>
+</html>

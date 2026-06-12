@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 16 · 图片如何变成一串 token</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  .lvl{color:var(--warn)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 16 · 图片如何变成一串 token</h1>
+  <div class="sub">一张图 → patch 网格切分 → 拍扁成向量 → 拉成序列接到文字后面，全都能动手玩</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 原图 <small>换图案 + 调 patch 大小</small></h2>
+    <canvas id="img" height="240"></canvas>
+    <div class="chips" id="imgChips">
+      <span class="chip on" data-p="grad">渐变</span>
+      <span class="chip" data-p="circle">圆</span>
+      <span class="chip" data-p="cross">十字</span>
+      <span class="chip" data-p="rand">噪点</span>
+    </div>
+    <div class="row">
+      <label>patch 大小 <span class="lvl" id="pv">16</span>px</label>
+      <input type="range" id="psize" min="8" max="32" step="8" value="16" style="width:160px">
+    </div>
+    <p class="note">patch 越小 → 视觉 token 越多 → 理解越细但越贵越慢。</p>
+  </div>
+
+  <div class="card">
+    <h2>② patch 网格切分 <small>每块 = 一个视觉 token</small></h2>
+    <canvas id="grid" height="240"></canvas>
+    <p class="note">128×128 图按 16px patch = 8×8 = 64 个 patch。和 Day 6 切词同理，只是源换成了切图。</p>
+  </div>
+
+  <div class="card full">
+    <h2>③ 序列化：图 token 接到文字 token 后面 <small>这就是多模态 message</small></h2>
+    <canvas id="seq" height="120"></canvas>
+    <div class="row">
+      <span>视觉 token <span class="stat" id="ntok">—</span></span>
+      <span>估算总 token <span class="stat" id="cost">—</span></span>
+      <span>≈ tokens (宽×高)/750 + patch 数</span>
+    </div>
+    <p class="note">"describe" 2 个文字 token + 一堆图 token 拼成一条序列，进同一个 Transformer；token 越多越贵。</p>
+  </div>
+</div>
+<script>
+const ic=document.getElementById('img'),gc=document.getElementById('grid'),sc=document.getElementById('seq');
+const SZ=128; let pat='grad', P=16;
+function clear(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+function val(r,c){const cx=SZ/2,cy=SZ/2,d=Math.hypot(r-cy,c-cx);
+  if(pat==='grad')return (r+c)/(2*SZ)*255;
+  if(pat==='circle')return d<SZ/3?220:40;
+  if(pat==='cross')return (Math.abs(r-cy)<14||Math.abs(c-cx)<14)?230:30;
+  return Math.random()*255}
+function color(v){return `rgb(${88-v/4|0},${100+v/2|0},${120+v/3|0})`}
+function drawImg(){const x=clear(ic),w=ic.clientWidth,h=ic.clientHeight,s=Math.min(w,h),step=s/16;
+  for(let r=0;r<16;r++)for(let c=0;c<16;c++){x.fillStyle=color(val(r/16*SZ,c/16*SZ));x.fillRect(c*step,r*step,step+1,step+1)}}
+function drawGrid(){const x=clear(gc),w=gc.clientWidth,h=gc.clientHeight,s=Math.min(w,h),step=s/16;const n=SZ/P;
+  for(let r=0;r<16;r++)for(let c=0;c<16;c++){x.fillStyle=color(val(r/16*SZ,c/16*SZ));x.fillRect(c*step,r*step,step+1,step+1)}
+  x.strokeStyle='#58a6ff';x.lineWidth=1.2;const g=s/n;for(let i=0;i<=n;i++){x.beginPath();x.moveTo(i*g,0);x.lineTo(i*g,s);x.moveTo(0,i*g);x.lineTo(s,i*g);x.stroke()}}
+function drawSeq(){const x=clear(sc),w=sc.clientWidth,h=sc.clientHeight;const n=Math.pow(SZ/P,2);
+  x.fillStyle='#1f6feb';[0,1].forEach(i=>{x.fillRect(8+i*54,40,48,40);x.fillStyle='#fff';x.font='11px sans-serif';x.fillText(i?'image':'text',12+i*54,64);x.fillStyle='#1f6feb'});
+  const show=Math.min(n,Math.floor((w-130)/18));for(let i=0;i<show;i++){const v=val(Math.random()*SZ,Math.random()*SZ);x.fillStyle=color(v);x.fillRect(128+i*18,42,16,36)}
+  x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText(`+ ${n} 个视觉 token →`,128,32);
+  document.getElementById('ntok').textContent=n;document.getElementById('cost').textContent=((SZ*SZ/750)|0)+n+2}
+function draw(){drawImg();drawGrid();drawSeq()}
+document.getElementById('imgChips').onclick=e=>{if(!e.target.dataset.p)return;pat=e.target.dataset.p;document.querySelectorAll('#imgChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.p===pat));draw()};
+const ps=document.getElementById('psize');ps.oninput=()=>{P=+ps.value;document.getElementById('pv').textContent=P;draw()};
+draw();window.onresize=draw;
+</script>
+</body>
+</html>

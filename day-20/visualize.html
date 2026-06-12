@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 20 · 带 Tool Use 的命令行助手</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--tool:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 20 · 把 Phase 2 拼成一台带工具的助手</h1>
+  <div class="sub">用户提问 → 流式吐字 → 调用工具 → 拿结果续答，循环到答完（含一次超时重试）</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① agent loop 流程 <small>调模型→要用工具→执行→塞回→再调，转到答完</small></h2>
+    <canvas id="flow" height="120"></canvas>
+    <div class="row">
+      <div class="chips" id="qChips">
+        <span class="chip on" data-q="calc">3+5 等于几（calc）</span>
+        <span class="chip" data-q="time">现在几点（time）</span>
+        <span class="chip" data-q="search">查一下 RAG（search）</span>
+      </div>
+      <button id="run">▶ 跑一遍</button>
+      <button id="reset" class="ghost">重置</button>
+      <span>状态 <span class="stat" id="state">待命</span></span>
+    </div>
+    <p class="note">工具不是模型自己执行——是你的代码执行。模型只"说要调"，安全/权限全在你手里。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 对话窗口 <small>逐字流式 + 工具调用</small></h2>
+    <canvas id="chat" height="260"></canvas>
+    <p class="note">紫色行=tool 调用与结果；绿色行=助手续答。第1题先超时一次再自动重试（Day19）。</p>
+  </div>
+</div>
+<script>
+// ---------- 数据：3 个问题各自的对话脚本 ----------
+const SCRIPTS = {
+  calc:   {timeout:true, msgs:[["u","3+5 等于几？"],["a","让我算一下…"],["t","calc {a:3,op:+,b:5} → 8"],["a","答案是 8。"]]},
+  time:   {timeout:false,msgs:[["u","现在几点？"],["a","查一下时间…"],["t","time {} → 2026-06-10 15:30"],["a","现在 15:30。"]]},
+  search: {timeout:false,msgs:[["u","帮我查一下 RAG"],["a","搜一下资料…"],["t","search {q:RAG} → 检索增强生成"],["a","RAG=先查资料再让模型作答。"]]}
+};
+const STEPS=["调模型","用工具","执行","塞回","续答"];
+let q="calc", lines=[], running=false;
+
+const fc=document.getElementById('flow'),cc=document.getElementById('chat');
+function clr(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+
+// ---------- 流程条 ----------
+let active=-1;
+function drawFlow(){const x=clr(fc),w=fc.clientWidth,h=fc.clientHeight,n=STEPS.length,bw=w/n;
+  for(let i=0;i<n;i++){const cx=bw*i+bw/2;
+    x.fillStyle=i===active?'#1f6feb':'#161b22';x.strokeStyle=i===active?'#58a6ff':'#283143';x.lineWidth=2;
+    x.beginPath();x.roundRect?x.roundRect(bw*i+14,h/2-22,bw-28,44,10):x.rect(bw*i+14,h/2-22,bw-28,44);x.fill();x.stroke();
+    x.fillStyle=i===active?'#fff':'#8b949e';x.font='13px sans-serif';x.textAlign='center';x.fillText(STEPS[i],cx,h/2+5);
+    if(i<n-1){x.strokeStyle='#283143';x.beginPath();x.moveTo(bw*i+bw-14,h/2);x.lineTo(bw*(i+1)+14,h/2);x.stroke()}}}
+
+// ---------- 对话窗 ----------
+function drawChat(){const x=clr(cc),w=cc.clientWidth;let y=24;x.font='13px monospace';x.textAlign='left';
+  lines.forEach(l=>{const C={u:'#58a6ff',a:'#3fb950',t:'#bc8cff',e:'#f0883e'}[l.role];
+    x.fillStyle=C;x.fillText({u:'👤',a:'🤖',t:'🔧',e:'⚠'}[l.role]+' '+l.text,14,y);y+=24})}
+
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function type(role,text){const ln={role,text:''};lines.push(ln);
+  for(const ch of text){ln.text+=ch;drawChat();await sleep(14)}}
+async function run(){if(running)return;running=true;lines=[];active=0;document.getElementById('state').textContent='运行中';
+  const sc=SCRIPTS[q];
+  for(const[role,text]of sc.msgs){
+    if(role==='u'){active=0;drawFlow();await type('u',text)}
+    else if(role==='a'&&active<4){active=4;drawFlow();await type('a',text)}
+    else if(role==='a'){await type('a',text)}
+    else if(role==='t'){
+      if(sc.timeout&&active===0){active=0;drawFlow();await type('e','超时，0.05s 后重试…');await sleep(300)}
+      active=1;drawFlow();await sleep(250);active=2;drawFlow();await type('t',text);active=3;drawFlow();await sleep(250)}}
+  active=-1;drawFlow();document.getElementById('state').textContent='答完 ✓';running=false}
+
+document.getElementById('qChips').onclick=e=>{if(!e.target.dataset.q)return;q=e.target.dataset.q;
+  document.querySelectorAll('#qChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.q===q));reset()};
+document.getElementById('run').onclick=run;
+function reset(){lines=[];active=-1;running=false;document.getElementById('state').textContent='待命';drawFlow();drawChat()}
+document.getElementById('reset').onclick=reset;
+drawFlow();drawChat();window.onresize=()=>{drawFlow();drawChat()};
+</script>
+</body>
+</html>

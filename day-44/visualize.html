@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 44 · Multi-Agent 三模式 — 协作 / 委托 / 竞争</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 44 · Multi-Agent 三模式</h1>
+  <div class="sub">单步对照三种协作 topology：协作=流水线 · 委托=主管分派 · 竞争=多副本投票</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>① 协作（流水线，各司其职） <small>蓝=planner 橙=coder 绿=reviewer / 微服务编排</small></h2>
+    <canvas id="c1" width="1040" height="150"></canvas>
+  </div>
+  <div class="card">
+    <h2>② 委托（supervisor 分派） <small>主管选专家 / dispatcher 主从路由</small></h2>
+    <canvas id="c2" width="1040" height="190"></canvas>
+  </div>
+  <div class="card">
+    <h2>③ 竞争（多方案投票） <small>3 worker 各出版 → judge 取最优 / 负载均衡多副本+仲裁</small></h2>
+    <canvas id="c3" width="1040" height="190"></canvas>
+    <div class="row">
+      <button id="step">▶ 单步执行</button>
+      <button class="ghost" id="reset">重置</button>
+      <span class="stat" id="stat">第 0 步 / 等待开始</span>
+    </div>
+    <p class="note">三模式可嵌套：supervisor 分派一个子团队协作完成，关键步再竞争多采样投票。单 Agent 够用就别上团队。</p>
+  </div>
+</div>
+<script>
+// 6 步把三模式逐一点亮：0-2 协作链, 3 委托分派, 4-5 竞争出方案+投票
+let i=0; const N=6;
+const C={blue:"#58a6ff",orange:"#f0883e",green:"#3fb950",mut:"#5b6675",idle:"#283143"};
+const c1=document.getElementById("c1").getContext("2d");
+const c2=document.getElementById("c2").getContext("2d");
+const c3=document.getElementById("c3").getContext("2d");
+function box(g,x,y,w,h,col,on,t1,t2){g.fillStyle=on?col+"33":"#11161f";g.strokeStyle=on?col:C.idle;g.lineWidth=on?2.5:1.5;g.beginPath();g.roundRect(x,y,w,h,10);g.fill();g.stroke();g.textAlign="center";g.fillStyle=on?col:C.mut;g.font="bold 13px sans-serif";g.fillText(t1,x+w/2,y+h/2-4);g.fillStyle=on?"#e6edf3":C.mut;g.font="11px sans-serif";g.fillText(t2,x+w/2,y+h/2+14);}
+function arrow(g,x1,y,x2,on){g.strokeStyle=on?C.green:C.idle;g.lineWidth=2;g.beginPath();g.moveTo(x1,y);g.lineTo(x2,y);g.stroke();g.fillStyle=on?C.green:C.idle;g.beginPath();g.moveTo(x2,y);g.lineTo(x2-8,y-4);g.lineTo(x2-8,y+4);g.fill();}
+function p1(){c1.clearRect(0,0,1040,150);const w=240,h=60,y=45;
+  box(c1,40,y,w,h,C.blue,i>=1,"planner","拆 3 步");arrow(c1,290,y+30,330,i>=2);
+  box(c1,340,y,w,h,C.orange,i>=2,"coder","按步写码");arrow(c1,590,y+30,630,i>=3);
+  box(c1,640,y,w,h,C.green,i>=3,"reviewer","验收+建议");
+  c1.fillStyle=C.mut;c1.font="12px sans-serif";c1.textAlign="left";c1.fillText("上一个产出=下一个输入，串行流水线",40,135);}
+function p2(){c2.clearRect(0,0,1040,190);const on=i>=4;
+  box(c2,420,15,200,55,C.blue,on,"supervisor","判任务→选专家");
+  const xs=[120,440,760],L=["math 专家","code 专家","write 专家"];
+  for(let k=0;k<3;k++){const hit=on&&k===2;box(c2,xs[k],120,200,55,hit?C.green:C.mut,on,L[k],hit?"← 派给它":"");
+    c2.strokeStyle=on?(hit?C.green:C.idle):C.idle;c2.lineWidth=hit?2.5:1.5;c2.beginPath();c2.moveTo(520,70);c2.lineTo(xs[k]+100,120);c2.stroke();}
+  c2.fillStyle=C.mut;c2.font="12px sans-serif";c2.textAlign="left";c2.fillText("主管自己不干活，只路由——dispatcher 主从模式",120,185);}
+function p3(){c3.clearRect(0,0,1040,190);const made=i>=5,won=i>=6;const xs=[120,440,760];
+  for(let k=0;k<3;k++){const w=k===2;box(c3,xs[k],15,200,55,w&&won?C.green:C.orange,made,"worker"+(k+1),"方案"+(k+1));}
+  box(c3,420,120,200,55,C.green,won,"judge","投票 → 选 #3");
+  for(let k=0;k<3;k++){c3.strokeStyle=won?(k===2?C.green:C.idle):(made?C.orange:C.idle);c3.lineWidth=k===2&&won?2.5:1.5;c3.beginPath();c3.moveTo(xs[k]+100,70);c3.lineTo(520,120);c3.stroke();}
+  c3.fillStyle=C.mut;c3.font="12px sans-serif";c3.textAlign="left";c3.fillText("3 副本各算一遍，仲裁取最优——换算力买准确率",120,185);}
+function stat(){document.getElementById("stat").textContent=i>=N?`第 ${i} 步 / 三模式走完 ✅`:`第 ${i} 步 / ${["等待开始","planner","coder","reviewer","supervisor 分派","worker 各出方案","judge 投票"][i]}`;}
+function draw(){p1();p2();p3();stat();}
+document.getElementById("step").onclick=()=>{if(i<N)i++;draw();};
+document.getElementById("reset").onclick=()=>{i=0;draw();};
+draw();
+</script>
+</body>
+</html>

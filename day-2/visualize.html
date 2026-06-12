@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 2 · 词向量空间</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--pink:#db61a2}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:2fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block;cursor:grab}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  label{color:var(--mut);font-size:13px}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .nbr{display:flex;justify-content:space-between;padding:5px 8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  .nbr b{color:var(--accent)}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 2 · 词向量空间</h1>
+  <div class="sub">点词看最近邻 · 拖词看相似度变化 · 勾出「国王-男人+女人=女王」</div>
+</header>
+<div class="wrap">
+  <div class="card full">
+    <h2>① 语义平面 <small>越近=意思越像。点一个词高亮它的最近邻，拖动任意词实时看余弦相似度</small></h2>
+    <canvas id="map" height="440"></canvas>
+    <div class="row">
+      <button id="ana">▶ 国王-男人+女人=？</button>
+      <button id="reset" class="ghost">重置布局</button>
+      <span>已选 <span class="stat" id="sel">queen</span></span>
+      <span>拖动 <span class="stat" id="drag">—</span></span>
+    </div>
+    <p class="note">向量本是高维，这里投到 2D。点击=查最近邻；拖动一个词靠近/远离另一词，右侧相似度会变。</p>
+  </div>
+  <div class="card">
+    <h2>② 与 <span class="stat" id="who">queen</span> 的相似度 <small>cos 夹角</small></h2>
+    <div id="list"></div>
+    <p class="note">cos=1 同向同义；接近 0 无关。拖词后这里实时重排。</p>
+  </div>
+</div>
+<script>
+// 7 个词的 4 维 embedding（同 practice.py 思路）：[王室,性别,动物,大小]
+const E={king:[.95,.9,0,.7],queen:[.95,-.9,0,.6],man:[.1,.9,0,.6],woman:[.1,-.9,0,.5],cat:[0,.05,.95,.1],dog:[0,.1,.95,.3],lion:[.05,.1,.9,.6]};
+const COL={king:'#58a6ff',queen:'#db61a2',man:'#3fb950',woman:'#f0883e',cat:'#a371f7',dog:'#56d4dd',lion:'#e3b341'};
+const words=Object.keys(E);
+const dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0),nrm=a=>Math.hypot(...a);
+const cos=(a,b)=>dot(a,b)/(nrm(a)*nrm(b));
+let pos={},sel='queen',drag=null,ana=false;
+function layout(){ // 用前两维近似投到 2D，加点抖动散开
+  pos={king:[.78,.28],queen:[.62,.74],man:[.30,.30],woman:[.22,.72],cat:[.55,.20],dog:[.70,.18],lion:[.85,.55]};
+}
+const c=document.getElementById('map'),x=c.getContext('2d');
+function fit(){c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.setTransform(2,0,0,2,0,0)}
+function draw(){const W=c.clientWidth,H=c.clientHeight;fit();x.clearRect(0,0,W,H);
+  x.strokeStyle='#1b2230';for(let i=1;i<8;i++){x.beginPath();x.moveTo(W*i/8,0);x.lineTo(W*i/8,H);x.moveTo(0,H*i/8);x.lineTo(W,H*i/8);x.stroke();}
+  if(ana){const P=p=>[pos[p][0]*W,pos[p][1]*H];const a=P('king'),b=P('man'),d=P('woman'),q=[a[0]-b[0]+d[0],a[1]-b[1]+d[1]];
+    x.setLineDash([6,5]);x.strokeStyle='#db61a2';x.lineWidth=2;x.beginPath();x.moveTo(a[0],a[1]);x.lineTo(b[0],b[1]);x.lineTo(d[0],d[1]);x.lineTo(q[0],q[1]);x.lineTo(a[0],a[1]);x.stroke();x.setLineDash([]);
+    x.fillStyle='#db61a2';x.beginPath();x.arc(q[0],q[1],6,0,7);x.fill();x.fillText('结果≈queen',q[0]+10,q[1]);}
+  const top=words.map(w=>[w,cos(E[sel],E[w])]).filter(p=>p[0]!=sel).sort((a,b)=>b[1]-a[1]).slice(0,2).map(p=>p[0]);
+  words.forEach(w=>{const px=pos[w][0]*W,py=pos[w][1]*H;if(top.includes(w)){x.strokeStyle='#58a6ff';x.globalAlpha=.4;x.lineWidth=2;x.beginPath();x.moveTo(pos[sel][0]*W,pos[sel][1]*H);x.lineTo(px,py);x.stroke();x.globalAlpha=1;}});
+  words.forEach(w=>{const px=pos[w][0]*W,py=pos[w][1]*H;x.fillStyle=COL[w];x.beginPath();x.arc(px,py,w==sel?12:9,0,7);x.fill();if(w==sel){x.strokeStyle='#fff';x.lineWidth=2;x.stroke();}x.fillStyle='#e6edf3';x.font='13px sans-serif';x.fillText(w,px+13,py+4);});
+}
+function panel(){const l=document.getElementById('list');document.getElementById('who').textContent=sel;document.getElementById('sel').textContent=sel;
+  l.innerHTML=words.filter(w=>w!=sel).map(w=>[w,cos(E[sel],E[w])]).sort((a,b)=>b[1]-a[1]).map(([w,s])=>`<div class="nbr"><b>${w}</b><span>${s.toFixed(3)}</span></div>`).join('');}
+function hit(mx,my){const W=c.clientWidth,H=c.clientHeight;return words.find(w=>Math.hypot(mx-pos[w][0]*W,my-pos[w][1]*H)<14)}
+c.onmousedown=e=>{const r=c.getBoundingClientRect(),w=hit(e.clientX-r.left,e.clientY-r.top);if(w){sel=w;drag=w;document.getElementById('drag').textContent=w;c.style.cursor='grabbing';draw();panel();}};
+c.onmousemove=e=>{if(!drag)return;const r=c.getBoundingClientRect();pos[drag]=[Math.max(.03,Math.min(.97,(e.clientX-r.left)/c.clientWidth)),Math.max(.05,Math.min(.95,(e.clientY-r.top)/c.clientHeight))];draw();};
+c.onmouseup=()=>{drag=null;c.style.cursor='grab';};
+document.getElementById('ana').onclick=e=>{ana=!ana;e.target.classList.toggle('ghost',!ana);draw();};
+document.getElementById('reset').onclick=()=>{layout();sel='queen';ana=false;draw();panel();};
+layout();draw();panel();window.onresize=()=>draw();
+</script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 5 · Decoder / Causal Mask 可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#f85149}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .legend{display:flex;gap:14px;margin-top:8px;font-size:12px;color:var(--mut);flex-wrap:wrap}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:middle;margin-right:4px}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 5 · 只能看左边，逐字往外吐</h1>
+  <div class="sub">因果掩码三角矩阵 → 逐 token 自回归生成，看清 Decoder 怎么防偷看未来</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 因果掩码 Causal Mask <small>行=当前token 列=被看token</small></h2>
+    <canvas id="mask" height="300"></canvas>
+    <div class="legend">
+      <span><span class="dot" style="background:#3fb950"></span>可见(j≤i)</span>
+      <span><span class="dot" style="background:#f85149"></span>封死(未来 j>i, -∞)</span>
+      <span><span class="dot" style="background:#58a6ff"></span>悬停的当前行</span>
+    </div>
+    <p class="note">第 i 个 token 只能看自己及左边，上三角全置 -∞，softmax 后权重≈0。鼠标悬停看一行。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 自回归生成 <small>吐一个→接回去→再算下一个</small></h2>
+    <canvas id="gen" height="300"></canvas>
+    <div class="row">
+      <button id="run">▶ 生成</button>
+      <button id="reset" class="ghost">重置</button>
+      <label>速度 <span class="stat" id="spv">1.0x</span></label>
+      <input type="range" id="sp" min="0.3" max="3" step="0.1" value="1" style="width:140px">
+      <span>已吐 <span class="stat" id="cnt">0</span> 个</span>
+    </div>
+    <p class="note">绿=已生成token；灰=还没轮到/未来被掩。每步只用「已生成」预测下一个，永不回看未来。</p>
+  </div>
+</div>
+<script>
+const VOCAB=["你","好","世","界","AI","！"];
+// ---------- ① causal mask 三角矩阵 ----------
+const mc=document.getElementById('mask'),N=8;let hoverRow=-1;
+function clear(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+function drawMask(){const x=clear(mc),w=mc.clientWidth,h=mc.clientHeight,pad=24,g=(Math.min(w,h)-pad)/N;
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){const future=j>i;x.fillStyle=future?'#3a1417':'#10331a';
+    if(i===hoverRow)x.fillStyle=future?'#f85149':'#3fb950';x.fillRect(pad+j*g,pad+i*g,g-2,g-2);
+    x.fillStyle=future?'#f85149':'#3fb950';x.globalAlpha=.85;x.font='11px sans-serif';x.textAlign='center';
+    x.fillText(future?'∞':'1',pad+j*g+g/2-1,pad+i*g+g/2+4);x.globalAlpha=1}
+  x.fillStyle='#8b949e';x.font='11px sans-serif';x.textAlign='center';
+  for(let k=0;k<N;k++){x.fillText('t'+k,pad+k*g+g/2,16);x.fillText('t'+k,12,pad+k*g+g/2+4)}}
+mc.onmousemove=e=>{const r=mc.getBoundingClientRect(),pad=24,g=(Math.min(mc.clientWidth,mc.clientHeight)-pad)/N;hoverRow=Math.floor((e.clientY-r.top-pad)/g);if(hoverRow<0||hoverRow>=N)hoverRow=-1;drawMask()};
+mc.onmouseleave=()=>{hoverRow=-1;drawMask()};
+// ---------- ② 自回归生成动画 ----------
+const gc=document.getElementById('gen');let seq=["你"],run=false,t=0;
+function drawGen(){const x=clear(gc),w=gc.clientWidth,h=gc.clientHeight,total=8,bw=(w-40)/total,y=h/2-26;
+  for(let i=0;i<total;i++){const made=i<seq.length,cur=i===seq.length;
+    x.fillStyle=made?'#16331c':'#10151c';x.strokeStyle=cur?'#58a6ff':made?'#3fb950':'#283143';x.lineWidth=cur?2.5:1.5;
+    x.beginPath();x.roundRect(20+i*bw,y,bw-10,52,8);x.fill();x.stroke();
+    x.fillStyle=made?'#e6edf3':'#3a4350';x.font='20px sans-serif';x.textAlign='center';x.fillText(made?seq[i]:(cur?'?':'·'),20+i*bw+(bw-10)/2,y+33)}
+  x.fillStyle='#8b949e';x.font='12px sans-serif';x.textAlign='left';x.fillText('每次只看左边已生成的，预测最右边的 ?',20,y+86)}
+function next(){if(seq.length>=8){run=false;document.getElementById('run').textContent='▶ 生成';return}seq.push(VOCAB[seq.length%VOCAB.length]);document.getElementById('cnt').textContent=seq.length-1;drawGen()}
+let last=0;function loop(ts){if(!run)return;if(ts-last>700/(+sp.value)){last=ts;next()}drawGen();requestAnimationFrame(loop)}
+const sp=document.getElementById('sp');sp.oninput=()=>document.getElementById('spv').textContent=(+sp.value).toFixed(1)+'x';
+document.getElementById('run').onclick=e=>{run=!run;e.target.textContent=run?'⏸ 暂停':'▶ 生成';if(run)requestAnimationFrame(loop)};
+document.getElementById('reset').onclick=()=>{run=false;seq=["你"];document.getElementById('run').textContent='▶ 生成';document.getElementById('cnt').textContent=0;drawGen()};
+drawMask();drawGen();window.onresize=()=>{drawMask();drawGen()};
+</script>
+</body>
+</html>

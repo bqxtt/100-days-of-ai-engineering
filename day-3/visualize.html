@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 3 · Self-Attention 可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  input[type=text]{background:#0b0f15;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px;width:340px}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  .lvl{color:var(--warn)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 3 · 把 Self-Attention 拆开看</h1>
+  <div class="sub">每个词拿 query 去匹配全场 key → 缩放点积 → softmax → 按权重取 value，权重热力图全程可玩</div>
+</header>
+<div class="wrap">
+
+  <div class="card full">
+    <h2>① 输入 tokens <small>改这句话，下面的注意力立刻重算</small></h2>
+    <div class="row">
+      <input type="text" id="toks" value="cat sat on the mat">
+      <button id="apply">应用</button>
+      <span class="chip on" data-p="db" id="presetA">类比:数据库查询</span>
+      <span class="chip" data-p="rnd" id="presetB">随机重投影</span>
+    </div>
+    <p class="note">每个 token 投影成 Q/K/V 三种身份；query 去问全场 key，谁像谁就给谁高权重。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 注意力权重热力图 <small>第i行=token i 分给全场的注意力，行和=1</small></h2>
+    <canvas id="heat" height="300"></canvas>
+    <p class="note">颜色越亮=越关注。把鼠标移上去看该词具体看了谁多少。每行越亮越分散=缩放够大。</p>
+  </div>
+
+  <div class="card">
+    <h2>③ 缩放 √d_k 的威力 <small>温度=softmax 锐度，对应 ÷√d_k</small></h2>
+    <canvas id="bars" height="300"></canvas>
+    <div class="row">
+      <label>缩放温度 <span class="lvl" id="tv">1.00</span></label>
+      <input type="range" id="temp" min="0.05" max="3" step="0.05" value="1" style="width:200px">
+      <span>选中行 <span class="stat" id="ri">0</span></span>
+    </div>
+    <p class="note">温度→小：softmax 塌成 one-hot（只盯一个词）；温度→大：权重趋于平均。这就是 √d_k 在调的事。</p>
+  </div>
+</div>
+<script>
+// ---------- 假"词嵌入"：稳定哈希把每个 token 变成 d 维向量 ----------
+const D=8;
+function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
+function embed(tok){const v=[];let h=hash(tok);for(let k=0;k<D;k++){h=(Math.imul(h,1103515245)+12345)>>>0;v.push((h/4294967295)*2-1)}return v}
+let toks=['cat','sat','on','the','mat'];
+let Wq,Wk,Wv;
+function rnd(){return Math.random()*2-1}
+function mat(){return Array.from({length:D},()=>Array.from({length:D},rnd))}
+function initW(mode){if(mode==='db'){Wq=ident();Wk=ident();Wv=ident()}else{Wq=mat();Wk=mat();Wv=mat()}compute()}
+function ident(){return Array.from({length:D},(_,i)=>Array.from({length:D},(_,j)=>i===j?1:0))}
+function proj(v,W){const o=[];for(let j=0;j<D;j++){let s=0;for(let i=0;i<D;i++)s+=v[i]*W[i][j];o.push(s)}return o}
+function dot(a,b){let s=0;for(let i=0;i<D;i++)s+=a[i]*b[i];return s}
+
+let attn=[];
+function compute(){const E=toks.map(embed);const Q=E.map(v=>proj(v,Wq)),K=E.map(v=>proj(v,Wk));const n=toks.length;const T=+temp.value;attn=[];
+  for(let i=0;i<n;i++){const sc=[];for(let j=0;j<n;j++)sc.push(dot(Q[i],K[j])/Math.sqrt(D)/T);const m=Math.max(...sc);const ex=sc.map(x=>Math.exp(x-m));const s=ex.reduce((a,b)=>a+b,0);attn.push(ex.map(x=>x/s))}
+  draw()}
+
+const heat=document.getElementById('heat'),bars=document.getElementById('bars');
+let hi=-1,ri=0;
+function clear(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+function col(v){const r=Math.round(20+v*60),g=Math.round(40+v*180),b=Math.round(60+v*120);return`rgb(${r},${g},${b})`}
+function drawHeat(){const x=clear(heat),w=heat.clientWidth,h=heat.clientHeight,n=toks.length,pad=46,cell=(Math.min(w,h)-pad)/n;
+  x.font='11px sans-serif';
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++){x.fillStyle=col(attn[i][j]);x.fillRect(pad+j*cell,pad+i*cell,cell-2,cell-2);if(i===hi){x.fillStyle='#0b0f15';x.fillText(attn[i][j].toFixed(2),pad+j*cell+4,pad+i*cell+cell/2)}}
+  x.fillStyle='#8b949e';for(let i=0;i<n;i++){x.fillText(toks[i].slice(0,5),4,pad+i*cell+cell/2);x.save();x.translate(pad+i*cell+cell/2,40);x.rotate(-0.5);x.fillText(toks[i].slice(0,5),0,0);x.restore()}}
+function drawBars(){const x=clear(bars),w=bars.clientWidth,h=bars.clientHeight,n=toks.length,row=attn[ri]||[],bw=(w-20)/n;
+  x.fillStyle='#8b949e';x.font='12px sans-serif';x.fillText('token「'+(toks[ri]||'')+'」看向：',10,16);
+  for(let j=0;j<n;j++){const bh=(row[j]||0)*(h-50);x.fillStyle=col(row[j]||0);x.fillRect(10+j*bw,h-20-bh,bw-6,bh);x.fillStyle='#8b949e';x.fillText(toks[j].slice(0,4),12+j*bw,h-6)}}
+function draw(){drawHeat();drawBars()}
+
+document.getElementById('apply').onclick=()=>{const v=document.getElementById('toks').value.trim().split(/\s+/).filter(Boolean).slice(0,8);if(v.length){toks=v;ri=0;document.getElementById('ri').textContent=0;compute()}};
+document.getElementById('presetA').onclick=()=>{setPreset('db')};
+document.getElementById('presetB').onclick=()=>{setPreset('rnd')};
+function setPreset(p){document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c.dataset.p===p));initW(p)}
+const temp=document.getElementById('temp');temp.oninput=()=>{document.getElementById('tv').textContent=(+temp.value).toFixed(2);compute()};
+heat.onmousemove=e=>{const r=heat.getBoundingClientRect(),n=toks.length,pad=46,cell=(Math.min(r.width,r.height)-pad)/n;const i=Math.floor((e.clientY-r.top-pad)/cell);hi=i;if(i>=0&&i<n){ri=i;document.getElementById('ri').textContent=i}draw()};
+heat.onmouseleave=()=>{hi=-1;draw()};
+initW('db');window.onresize=draw;
+</script>
+</body>
+</html>

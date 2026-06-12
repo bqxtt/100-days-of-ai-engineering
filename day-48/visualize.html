@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 48 · Agent 可观测性 — Trace 瀑布图可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 48 · Agent 可观测性：Trace / Span / Metrics</h1>
+  <div class="sub">单步展开一条 trace：根 span 出现 → 子 span 逐个落位成瀑布图，标耗时/token，右侧成本累加</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>① Trace 瀑布图 <small>蓝=LLM调用 橙=工具 绿=根/汇总 — 条越长越慢</small></h2>
+    <canvas id="wf" width="1040" height="280"></canvas>
+    <div class="row">
+      <button id="step">▶ 单步展开</button>
+      <button class="ghost" id="reset">重置</button>
+      <span class="stat" id="stat">第 0 步 / 等待开始</span>
+    </div>
+    <p class="note">每条 = 一个 Span（一段调用）。父子缩进串成树，长度按耗时——慢在哪步一眼可见，就是 LangSmith/Langfuse 那张图的极简版。</p>
+  </div>
+  <div class="card">
+    <h2>② 成本/token 累加 <small>token×单价=成本，本地免费仅演示</small></h2>
+    <canvas id="cost" width="1040" height="120"></canvas>
+  </div>
+</div>
+<script>
+// 一条 trace = span 列表：name/缩进 depth/耗时 ms/token/类型；T=LLM A=工具 R=根
+const SPANS=[
+ {n:"agent.run",d:0,ms:430,tk:0, ty:"R"},
+ {n:"llm.call",  d:1,ms:180,tk:42,ty:"T"},
+ {n:"tool.wordcount",d:1,ms:2, tk:0, ty:"A"},
+ {n:"llm.call",  d:1,ms:240,tk:88,ty:"T"},
+ {n:"tool.wordcount",d:1,ms:3, tk:0, ty:"A"},
+];
+const COL={R:"#3fb950",T:"#58a6ff",A:"#f0883e",idle:"#283143"};
+const PRICE=0.0002; let i=0;
+const wc=document.getElementById("wf"),wx=wc.getContext("2d");
+const cc=document.getElementById("cost"),cx=cc.getContext("2d");
+const maxms=Math.max(...SPANS.map(s=>s.ms));
+function wf(){
+  wx.clearRect(0,0,1040,280);
+  wx.fillStyle="#8b949e";wx.font="12px sans-serif";wx.textAlign="left";
+  wx.fillText("name  耗时  token            瀑布（长=慢）",16,22);
+  for(let k=0;k<SPANS.length;k++){
+    const s=SPANS[k],y=40+k*44,done=k<i,c=done?COL[s.ty]:COL.idle,x0=24+s.d*28;
+    wx.fillStyle=done?"#e6edf3":"#5b6675";wx.font="13px monospace";wx.textAlign="left";
+    wx.fillText((s.d?"└ ":"● ")+s.n,x0,y+18);
+    wx.fillStyle=done?c:"#5b6675";wx.fillText(s.ms+"ms",300,y+18);wx.fillText(s.tk+"tk",380,y+18);
+    const w=done?Math.max(6,s.ms/maxms*560):0;
+    wx.fillStyle=c+"55";wx.strokeStyle=c;wx.lineWidth=1.5;
+    wx.beginPath();wx.roundRect(450,y,w,22,5);wx.fill();wx.stroke();
+  }
+  wx.fillStyle="#8b949e";wx.font="12px sans-serif";
+  wx.fillText("trace_id 串起整棵树；parent_span_id 标父子——散日志做不到这种归因",16,272);
+}
+function cost(){
+  cx.clearRect(0,0,1040,120);cx.textAlign="left";
+  let tk=0;for(let k=0;k<i;k++)tk+=SPANS[k].tk;
+  const $=(tk/1000*PRICE).toFixed(5);
+  cx.fillStyle="#161b22";cx.fillRect(16,16,1008,88);cx.strokeStyle="#283143";cx.strokeRect(16,16,1008,88);
+  cx.fillStyle="#3fb950";cx.font="bold 30px monospace";cx.fillText("Σ "+tk+" token",40,64);
+  cx.fillStyle="#f0883e";cx.fillText("$"+$,340,64);
+  cx.fillStyle="#8b949e";cx.font="13px sans-serif";cx.fillText("成本=token×单价；本地 Ollama 免费，上线切云模型这就是账单",40,92);
+}
+function stat(){const e=document.getElementById("stat");e.textContent=i>=SPANS.length?`第 ${i} 步 / trace 完成 ✅`:`第 ${i} 步 / ${i?SPANS[i-1].n:"等待开始"}`;}
+function draw(){wf();cost();stat();}
+document.getElementById("step").onclick=()=>{if(i<SPANS.length)i++;draw();};
+document.getElementById("reset").onclick=()=>{i=0;draw();};
+draw();
+</script>
+</body>
+</html>

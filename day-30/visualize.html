@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 30 · CRAG 纠错检索可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#f85149;--rew:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 30 · CRAG 纠错检索：检得差就改写重检</h1>
+  <div class="sub">检索 → 评估器逐篇打相关性分 → 最高分 &lt; 阈值就改写 query 重检 → 过线才作答</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 决策流 <small>检索→评估→纠错重检→作答（转到过阈值或到顶）</small></h2>
+    <canvas id="flow" height="120"></canvas>
+    <div class="row">
+      <div class="chips" id="qChips">
+        <span class="chip on" data-q="good">好问题：CRAG 是怎么纠错的？</span>
+        <span class="chip" data-q="bad">没覆盖：今天天气怎么样？</span>
+      </div>
+      <button id="run">▶ 跑一遍</button>
+      <button id="reset" class="ghost">重置</button>
+      <label>相关性阈值 <span class="lvl" id="thv">0.55</span></label>
+      <input type="range" id="th" min="0.1" max="0.9" step="0.05" value="0.55" style="width:160px">
+      <span>状态 <span class="stat" id="state">待命</span></span>
+    </div>
+    <p class="note">绿=过阈值用它；红=太差丢掉；紫=改写 query 重检一次。阈值越高越爱重检（更稳但更慢）。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 召回文档相关性评分 <small>评委给每篇打 0~1，最高分决定走向</small></h2>
+    <canvas id="bars" height="240"></canvas>
+    <p class="note">朴素 RAG：召回就硬塞。CRAG：先评分，最高分没过阈值就改写 query 重来——这就是「纠错」。</p>
+  </div>
+</div>
+<script>
+// ---------- 数据：每个 query 几轮检索，每轮召回 2 篇文档及评分（模拟评委打分） ----------
+const SCRIPTS={
+  good:{rounds:[
+    {q:"CRAG 是怎么纠错的？",docs:[["猫是常见宠物，和 RAG 无关",0.05],["向量库用 ANN 做检索",0.30]]},
+    {q:"如何用 CRAG 进行错误修正？",docs:[["向量库用 ANN 做检索",0.35],["CRAG 用评估器打分，差就改写重检",0.80]]}
+  ]},
+  bad:{rounds:[
+    {q:"今天天气怎么样？",docs:[["猫是常见宠物",0.04],["Adaptive 按难度路由",0.10]]},
+    {q:"今天的天气如何？",docs:[["向量库用 ANN",0.06],["Self-RAG 自评检索",0.08]]},
+    {q:"今天有什么天气预报？",docs:[["CRAG 纠错重检",0.05],["猫喜欢睡觉",0.03]]}
+  ]}
+};
+const STEPS=["检索","评估打分","判定阈值","纠错重检","作答"];
+let q="good",running=false,active=-1,bars=[],curQ="",rounds=0,verdict="";
+const TH=document.getElementById('th');
+
+const fc=document.getElementById('flow'),bc=document.getElementById('bars');
+function clr(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+
+// ---------- 流程条 ----------
+function drawFlow(){const x=clr(fc),w=fc.clientWidth,h=fc.clientHeight,n=STEPS.length,bw=w/n;
+  for(let i=0;i<n;i++){const cx=bw*i+bw/2;
+    x.fillStyle=i===active?'#1f6feb':'#161b22';x.strokeStyle=i===active?'#58a6ff':'#283143';x.lineWidth=2;
+    x.beginPath();x.roundRect?x.roundRect(bw*i+14,h/2-22,bw-28,44,10):x.rect(bw*i+14,h/2-22,bw-28,44);x.fill();x.stroke();
+    x.fillStyle=i===active?'#fff':'#8b949e';x.font='13px sans-serif';x.textAlign='center';x.fillText(STEPS[i],cx,h/2+5);
+    if(i<n-1){x.strokeStyle='#283143';x.beginPath();x.moveTo(bw*i+bw-14,h/2);x.lineTo(bw*(i+1)+14,h/2);x.stroke()}}}
+
+// ---------- 评分条形图 ----------
+function drawBars(){const x=clr(bc),w=bc.clientWidth,h=bc.clientHeight,th=+TH.value;
+  x.textAlign='left';x.font='13px sans-serif';x.fillStyle='#8b949e';
+  x.fillText(curQ?('query：'+curQ+'    第'+rounds+'轮'):'选好问题点「跑一遍」',14,20);
+  const yLine=h-(th)*(h-60)-30;x.strokeStyle='#f0883e';x.setLineDash([5,4]);x.beginPath();x.moveTo(0,yLine);x.lineTo(w,yLine);x.stroke();x.setLineDash([]);
+  x.fillStyle='#f0883e';x.fillText('阈值 '+th.toFixed(2),w-90,yLine-6);
+  const n=bars.length||2,bw=w/(n+1);
+  bars.forEach((d,i)=>{const[txt,s]=d,bh=s*(h-60),bx=bw*(i+1)-30,by=h-30-bh;
+    x.fillStyle=s>=th?'#3fb950':'#f85149';x.fillRect(bx,by,60,bh);
+    x.fillStyle='#e6edf3';x.textAlign='center';x.font='12px sans-serif';x.fillText(s.toFixed(2),bx+30,by-6);
+    x.fillStyle='#8b949e';x.font='11px sans-serif';const t=txt.length>10?txt.slice(0,10)+'…':txt;x.fillText(t,bx+30,h-12)});
+  if(verdict){x.textAlign='center';x.font='15px sans-serif';x.fillStyle=verdict.includes('过')?'#3fb950':'#bc8cff';x.fillText(verdict,w/2,40)}}
+
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function run(){if(running)return;running=true;verdict="";document.getElementById('state').textContent='运行中';
+  const sc=SCRIPTS[q],th=+TH.value;
+  for(let r=0;r<sc.rounds.length;r++){const rd=sc.rounds[r];curQ=rd.q;rounds=r+1;bars=[];verdict="";
+    active=0;drawFlow();drawBars();await sleep(500);
+    active=1;drawFlow();bars=rd.docs;drawBars();await sleep(700);
+    active=2;drawFlow();const best=Math.max(...rd.docs.map(d=>d[1]));
+    if(best>=th){verdict="最高 "+best.toFixed(2)+" ≥ 阈值，过！";active=4;drawFlow();drawBars();
+      document.getElementById('state').textContent='作答 ✓';running=false;return}
+    if(r===sc.rounds.length-1){verdict="试到顶仍不过，老实说不知道";active=4;drawFlow();drawBars();
+      document.getElementById('state').textContent='不知道';running=false;return}
+    verdict="最高 "+best.toFixed(2)+" < 阈值，改写重检…";active=3;drawFlow();drawBars();await sleep(900)}
+  running=false}
+
+document.getElementById('qChips').onclick=e=>{if(!e.target.dataset.q)return;q=e.target.dataset.q;
+  document.querySelectorAll('#qChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.q===q));reset()};
+TH.oninput=()=>{document.getElementById('thv').textContent=(+TH.value).toFixed(2);drawBars()};
+document.getElementById('run').onclick=run;
+function reset(){running=false;active=-1;bars=[];curQ="";rounds=0;verdict="";document.getElementById('state').textContent='待命';drawFlow();drawBars()}
+document.getElementById('reset').onclick=reset;
+drawFlow();drawBars();window.onresize=()=>{drawFlow();drawBars()};
+</script>
+</body>
+</html>

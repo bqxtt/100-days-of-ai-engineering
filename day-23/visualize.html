@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 23 · 文本分块三种切法对比</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--tool:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:12px}
+  .row label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent);vertical-align:middle}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:10px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 23 · 同一段文本，三种切法</h1>
+  <div class="sub">固定大小硬切 vs 重叠留接缝 vs 递归沿边界 —— 拖滑块看块数与边界实时变化</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 三种分块方式高亮对比 <small>相邻块用不同底色，竖线=切口，红×=断句</small></h2>
+    <div class="row">
+      <div class="chips" id="mChips">
+        <span class="chip on" data-m="fixed">固定大小</span>
+        <span class="chip" data-m="overlap">重叠固定</span>
+        <span class="chip" data-m="recursive">递归（沿句号/段落）</span>
+      </div>
+      <label>块大小 <span class="stat" id="vSize">24</span><br><input id="size" type="range" min="10" max="60" value="24"></label>
+      <label>重叠 <span class="stat" id="vOv">6</span><br><input id="ov" type="range" min="0" max="20" value="6"></label>
+      <span>块数 <span class="stat" id="cnt">0</span></span>
+    </div>
+    <canvas id="text" height="300"></canvas>
+    <p class="note">固定/重叠不看内容，常斩断句子（红×）；递归优先段落→句号→逗号，块更整齐。重叠仅对前两种生效。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 块大小权衡 <small>太小=召回半句，太大=噪声多塞不下</small></h2>
+    <canvas id="bar" height="80"></canvas>
+    <p class="note">块越小越精准但丢上下文，块越大越完整但检索糊。起步建议：递归 + size 500 + overlap 50，再按召回调。</p>
+  </div>
+</div>
+<script>
+// ---------- 同一段文本：3 个主题（猫/咖啡/RAG），含段落与句号分隔符 ----------
+const TEXT="猫是独立的小动物，喜欢睡觉和晒太阳。它们一天能睡十六小时，醒着时大多在梳理毛发。\n\n咖啡因是一种兴奋剂，能暂时驱散困意。早晨一杯咖啡让人清醒，下午喝太多会影响睡眠。\n\nRAG即检索增强生成，先把文档切成小块存进向量库，提问时检索相关块再交给模型作答。";
+let mode="fixed", size=24, ov=6;
+const SEPS=["\n\n","。","，",""];
+
+function fixed(t,s){const o=[];for(let i=0;i<t.length;i+=s)o.push([i,Math.min(i+s,t.length)]);return o;}
+function overlap(t,s,k){const o=[],step=Math.max(1,s-k);for(let i=0;i<t.length;i+=step)o.push([i,Math.min(i+s,t.length)]);return o;}
+function recur(t,off,s,seps){t=t.trim();if(t.length<=s)return t?[[off,off+t.length]]:[];const sp=seps[0];let parts;
+  if(sp==="")parts=t.split("").map((c,i)=>c);else parts=t.split(sp).filter(p=>p).map(p=>sp&&sp!=="\n\n"?p+sp:p);
+  const out=[];let cur="",base=off;for(const p of parts){if(cur.length+p.length<=s){cur+=p;}else{if(cur)out.push([base,base+cur.length]);if(p.length>s){recur(p,base+cur.length,s,seps.slice(1)).forEach(r=>out.push(r));base=base+cur.length+p.length;cur="";}else{base=base+cur.length;cur=p;}}}if(cur.trim())out.push([base,base+cur.length]);return out;}
+
+function spans(){if(mode==="fixed")return fixed(TEXT,size);if(mode==="overlap")return overlap(TEXT,size,ov);return recur(TEXT,0,size,SEPS);}
+
+const tc=document.getElementById('text'),bc=document.getElementById('bar');
+function clr(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x;}
+const PAL=['#1f3a5f','#3a1f5f','#1f5f3a','#5f3a1f','#5f1f3a','#1f5f5a'];
+function isBreak(i){const c=TEXT[i-1];return c&&c!=="。"&&c!=="\n"&&c!=="，";}// 切口前不是句尾标点 = 断句
+
+function drawText(){const x=clr(tc),W=tc.clientWidth,per=22,padX=14;let cx=padX,cy=28;
+  const sp=spans();document.getElementById('cnt').textContent=sp.length;
+  x.font='16px monospace';x.textAlign='left';x.textBaseline='middle';
+  const starts={},ends={};sp.forEach((s,i)=>{starts[s[0]]=(starts[s[0]]||[]).concat(i);ends[s[1]]=true;});
+  let ci=0;
+  for(let i=0;i<TEXT.length;i++){const ch=TEXT[i];
+    if(ch==="\n"){cy+=34;cx=padX;continue;}
+    if(starts[i]!==undefined&&i>0)ci++;
+    if(cx>W-per){cy+=34;cx=padX;}
+    x.fillStyle=PAL[ci%PAL.length];x.fillRect(cx-1,cy-13,per,26);
+    x.fillStyle='#e6edf3';x.fillText(ch,cx+2,cy);
+    if(starts[i]!==undefined&&i>0){x.strokeStyle='#58a6ff';x.lineWidth=2;x.beginPath();x.moveTo(cx-2,cy-15);x.lineTo(cx-2,cy+15);x.stroke();
+      if(mode!=="recursive"&&isBreak(i)){x.fillStyle='#f85149';x.fillText('×',cx-7,cy-18);}}
+    cx+=per;}}
+
+function drawBar(){const x=clr(bc),W=bc.clientWidth,H=bc.clientHeight;const t=(size-10)/50;
+  x.fillStyle='#161b22';x.fillRect(14,H/2-12,W-28,24);
+  const g=x.createLinearGradient(14,0,W-14,0);g.addColorStop(0,'#3fb950');g.addColorStop(.5,'#58a6ff');g.addColorStop(1,'#f0883e');
+  x.fillStyle=g;x.fillRect(14,H/2-12,(W-28),24);
+  const px=14+t*(W-28);x.fillStyle='#e6edf3';x.fillRect(px-3,H/2-18,6,36);
+  x.fillStyle='#8b949e';x.font='12px sans-serif';x.textAlign='left';x.fillText('小块·精准·丢上下文',16,H/2+34);
+  x.textAlign='right';x.fillStyle='#8b949e';x.fillText('大块·完整·噪声多',W-16,H/2+34);}
+
+function render(){document.getElementById('vSize').textContent=size;document.getElementById('vOv').textContent=ov;drawText();drawBar();}
+document.getElementById('mChips').onclick=e=>{if(!e.target.dataset.m)return;mode=e.target.dataset.m;document.querySelectorAll('#mChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.m===mode));render();};
+document.getElementById('size').oninput=e=>{size=+e.target.value;render();};
+document.getElementById('ov').oninput=e=>{ov=+e.target.value;render();};
+render();window.onresize=render;
+</script>
+</body>
+</html>

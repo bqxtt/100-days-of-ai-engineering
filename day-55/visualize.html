@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 55 · ReAct Agent 毕业作品整机</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 55 · ReAct Agent 毕业作品整机</h1>
+  <div class="sub">ReAct 循环 · 多工具 · 短期记忆 · trace 日志 · 重试 · 评估 —— Phase 4 全部零件焊一台</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>多步任务："算 12+8 存成 sum 再取出" <small>每点一步：Thought→Action(工具)→Observation 回填→再想，直到 Final</small></h2>
+    <canvas id="cv" height="420"></canvas>
+    <div class="row">
+      <button id="next">▶ 走一步</button>
+      <button id="reset" class="ghost">重置</button>
+      <span>步数 <span class="stat" id="st">0</span></span>
+      <span>状态 <span class="stat" id="ph">待机</span></span>
+      <span>评估 <span class="stat" id="ev">—</span></span>
+    </div>
+    <p class="note">蓝=Thought(模型想) 橙=Action(本地跑工具) 绿=Observation(结果回填短期记忆) 灰=trace 落账。走到 Final 收工，再跑评估打分。</p>
+  </div>
+</div>
+<script>
+// 一台 ReAct Agent 的脚本：每步含 thought/工具/观测/最终
+const STEPS=[
+ {th:'要算 12+8',ac:'calc{+,12,8}',ob:'20'},
+ {th:'存进短期记忆',ac:'kv set sum=20',ob:'已存 sum=20'},
+ {th:'取出来确认',ac:'kv get sum',ob:'20'},
+ {th:'够了，给答案',ac:'Final',ob:'结果是 20'},
+];
+const c=document.getElementById('cv'),x=c.getContext('2d');
+let n=0,trace=[];
+function clr(){c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight)}
+function box(X,Y,w,h,f,s,t,tc){x.fillStyle=f;x.strokeStyle=s;x.lineWidth=2;x.fillRect(X,Y,w,h);x.strokeRect(X,Y,w,h);x.fillStyle=tc;x.font='12px sans-serif';x.fillText(t,X+8,Y+h/2+4)}
+function arrow(x1,y,x2){x.strokeStyle='#3fb950';x.lineWidth=2;x.beginPath();x.moveTo(x1,y);x.lineTo(x2,y);x.stroke();x.beginPath();x.moveTo(x2,y);x.lineTo(x2-7,y-4);x.lineTo(x2-7,y+4);x.fillStyle='#3fb950';x.fill()}
+function draw(){clr();const Wd=c.clientWidth,cw=(Wd-120)/3;
+ x.fillStyle='#8b949e';x.font='13px sans-serif';x.fillText('ReAct 循环（蓝想→橙做→绿看，回填记忆再想）',24,24);
+ const done=n>=STEPS.length, s=STEPS[Math.min(n,STEPS.length-1)];
+ const fin=s.ac==='Final'&&n>=STEPS.length-1;
+ box(24,40,cw,40, n? '#0d2b4d':'#11161f', n?'#58a6ff':'#283143', 'Thought: '+(n?s.th:'(待机)'),'#9ecbff'); arrow(24+cw,60,24+cw+30);
+ box(54+cw,40,cw, fin?'#1a2a14':'#3a2a14', fin?'#3fb950':'#f0883e', (fin?'Final':'Action: ')+(n?(fin?'':s.ac):''),'#f0c39a'); arrow(54+2*cw,60,54+2*cw+30);
+ box(84+2*cw,40,cw,40, n?'#13351c':'#11161f', n?'#3fb950':'#283143','Obs: '+(n?s.ob:''),'#7fd99a');
+ x.fillStyle='#8b949e';x.fillText('回填→短期记忆 messages，下一轮模型可见 ⤴',Wd/2-90,108);
+ x.fillStyle='#8b949e';x.fillText('trace 日志（可观测，复盘是哪步）：',24,150);
+ trace.forEach((t,i)=>box(24,162+i*34,Wd-48,28,'#11161f','#283143','· '+t,'#8b949e'));
+ if(done){box(24,170+trace.length*34,Wd-48,30,'#1a2a14','#3fb950','✅ 评估 3/3 = 100% · Phase4 毕业','#3fb950')}
+ document.getElementById('st').textContent=n;
+ document.getElementById('ph').textContent=done?'Final 收工':n?(s.ac==='Final'?'想最终答':'调工具'):'待机';
+ document.getElementById('ev').textContent=done?'100%':'—';
+}
+document.getElementById('next').onclick=()=>{if(n>=STEPS.length)return;const s=STEPS[n];trace.push(s.ac==='Final'?'Final: 结果是 20':'Action '+s.ac+' -> '+s.ob);n++;draw()};
+document.getElementById('reset').onclick=()=>{n=0;trace=[];draw()};
+draw();window.onresize=draw;
+</script>
+</body>
+</html>

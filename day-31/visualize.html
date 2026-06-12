@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 31 · Multi-hop RAG 检索链路</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--hop:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:10px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 31 · Multi-hop RAG 检索链路</h1>
+  <div class="sub">一个复合问 → 拆 2 跳 → 逐跳检索+抽答 → 答案回填下一跳 → 合成。点「跑一跳」逐步看</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>2 跳检索链 <small>后一跳的输入 = 前一跳的答案（有向接力）</small></h2>
+    <canvas id="cv" height="430"></canvas>
+    <div class="row">
+      <button id="step">▶ 跑下一跳</button>
+      <button id="reset" class="ghost">重置</button>
+      <span>当前阶段 <span class="stat" id="phase">拆题待命</span></span>
+    </div>
+    <p class="note">蓝=子问 · 绿=命中片段 · 紫=中间答回填 · 一次单跳=「子问→nomic嵌入→余弦取片段→qwen抽答」。多跳就是把它套个循环。</p>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('cv'),x=cv.getContext('2d');
+const DOCS=["Acme 的 CEO 是林韵","林韵母校复旦在上海","Gamma 工作室做游戏","长江注入东海","黄山在安徽"];
+// 每跳：子问、命中库doc索引、中间答；★命中片段拼出最终链
+const HOPS=[
+ {q:"Acme 的 CEO 是谁?",hit:0,a:"林韵"},
+ {q:"{0} 的母校在哪座城市?",hit:1,a:"上海"}
+];
+const Q="Acme CEO 的母校位于哪座城市?";
+let phase=0; // 0拆题 1hop1 2hop2 3合成
+function W(){return cv.clientWidth}function H(){return cv.clientHeight}
+function clear(){cv.width=W()*2;cv.height=H()*2;x.scale(2,2);x.clearRect(0,0,W(),H())}
+function box(cx,cy,w,h,fill,stroke,txt,sub){x.fillStyle=fill;x.strokeStyle=stroke;x.lineWidth=2;round(cx-w/2,cy-h/2,w,h,8);x.fill();x.stroke();x.fillStyle="#e6edf3";x.font="13px sans-serif";x.textAlign="center";x.fillText(txt,cx,cy+(sub?-4:4));if(sub){x.fillStyle="#8b949e";x.font="11px sans-serif";x.fillText(sub,cx,cy+13)}x.textAlign="start"}
+function round(a,b,w,h,r){x.beginPath();x.moveTo(a+r,b);x.arcTo(a+w,b,a+w,b+h,r);x.arcTo(a+w,b+h,a,b+h,r);x.arcTo(a,b+h,a,b,r);x.arcTo(a,b,a+w,b,r);x.closePath()}
+function arrow(x1,y1,x2,y2,c){x.strokeStyle=c;x.fillStyle=c;x.lineWidth=2;x.beginPath();x.moveTo(x1,y1);x.lineTo(x2,y2);x.stroke();const a=Math.atan2(y2-y1,x2-x1);x.beginPath();x.moveTo(x2,y2);x.lineTo(x2-9*Math.cos(a-.4),y2-9*Math.sin(a-.4));x.lineTo(x2-9*Math.cos(a+.4),y2-9*Math.sin(a+.4));x.fill()}
+function draw(){clear();const w=W();box(w/2,30,300,30,"#0d2440","#58a6ff","复合问："+Q);
+ const lanes=[100,230];const yc=110;
+ // 文档库
+ x.fillStyle="#8b949e";x.font="11px sans-serif";x.fillText("📚 文档库",20,360);
+ DOCS.forEach((d,i)=>{const dx=110+i*((w-160)/5);box(dx,385,((w-160)/5)-12,30,"#11261a","#1d4329",d.slice(0,8),"")});
+ HOPS.forEach((hp,i)=>{const y=lanes[i];const active=phase>=i+1;const sub=hp.q.replace("{0}",i?HOPS[0].a:"");
+   box(155,y,250,34,active?"#0d2440":"#161b22",active?"#58a6ff":"#283143","Hop"+(i+1)+" 子问:"+(active?sub:"…"),"");
+   if(active){arrow(280,y,340,y,"#58a6ff");box(440,y,180,34,"#11261a","#3fb950","命中:"+DOCS[hp.hit].slice(0,9),"nomic top-1");arrow(530,y,590,y,"#3fb950");box(670,y,120,34,"#2a1d40","#bc8cff","抽答:"+hp.a,"qwen2.5:3b");arrow(670,y+17,440+ (i?-300:0),385,"#1d4329")}
+   if(i===1&&phase>=2){arrow(155,lanes[0]+17,155,lanes[1]-17,"#bc8cff");x.fillStyle="#bc8cff";x.font="11px sans-serif";x.fillText("回填"+HOPS[0].a,160,(lanes[0]+lanes[1])/2)}
+ });
+ if(phase>=3){box(w/2,320,420,32,"#1b2f1b","#3fb950","✓ 合成最终答：林韵母校复旦 → 上海")}
+ document.getElementById('phase').textContent=["拆题待命","Hop1 检索+抽答","Hop2 检索+抽答","合成完成"][phase]}
+document.getElementById('step').onclick=()=>{phase=Math.min(3,phase+1);draw()};
+document.getElementById('reset').onclick=()=>{phase=0;draw()};
+draw();window.onresize=draw;
+</script>
+</body>
+</html>

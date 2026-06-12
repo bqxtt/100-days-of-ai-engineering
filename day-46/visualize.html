@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 46 · MCP 协议 — Host/Client/Server 三步握手可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 46 · MCP（USB-C 接口标准）</h1>
+  <div class="sub">单步走完三角握手：Host 内的 Client 发报文 → Server 暴露能力 → initialize → tools/list → tools/call → 结果回灌</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>① Host / Client / Server 三角 <small>蓝=Client发 绿=Server回 橙=调用 灰=未到</small></h2>
+    <canvas id="tri" width="1040" height="260"></canvas>
+    <div class="row">
+      <button id="step">▶ 单步执行</button>
+      <button class="ghost" id="reset">重置</button>
+      <span class="stat" id="stat">第 0 步 / 等待开始</span>
+    </div>
+    <p class="note">N+M 取代 N×M：工具方写一次 Server，宿主写一次 Client，报文固定，谁都能插谁。</p>
+  </div>
+  <div class="card">
+    <h2>② JSON-RPC 报文流 <small>每步追加一条真实 MCP 信封（method+params/result）</small></h2>
+    <canvas id="msg" width="1040" height="220"></canvas>
+  </div>
+</div>
+<script>
+// 三步握手脚本：每步=[阶段, 文字, 报文]；T=initialize L=tools/list C=tools/call O=喂模型
+const SCRIPT=[
+ {p:"T",t:"Client → initialize 握手",msg:'→ {method:"initialize", params:{protocolVersion:"2024-11-05"}}'},
+ {p:"O",t:"Server ← 宣告版本+能力",msg:'← {result:{capabilities:{tools:{}}, serverInfo:"mini-mcp"}}'},
+ {p:"L",t:"Client → tools/list 发现",msg:'→ {method:"tools/list"}'},
+ {p:"O",t:"Server ← 工具清单+schema",msg:'← {result:{tools:["get_weather","add"]}}'},
+ {p:"C",t:"Client → tools/call 调用",msg:'→ {method:"tools/call", params:{name:"get_weather", args:{city:"上海"}}}'},
+ {p:"O",t:"Server ← content 结果",msg:'← {result:{content:[{text:"上海 24°C 多云"}]}}'},
+ {p:"F",t:"喂 ollama 据真值作答",msg:'🤖 上海今天适合长袖+薄外套'},
+];
+const COL={T:"#58a6ff",L:"#58a6ff",C:"#f0883e",O:"#3fb950",F:"#3fb950",idle:"#283143"};
+const NAME={T:"initialize",L:"tools/list",C:"tools/call",O:"result",F:"LLM"};
+let i=0;
+const tc=document.getElementById("tri"),tx=tc.getContext("2d");
+const mc=document.getElementById("msg"),mx=mc.getContext("2d");
+// 三角三个节点：Host(左) / Client(中) / Server(右)
+const NODES=[{x:150,y:140,n:"Host\n宿主·LLM",c:"#58a6ff"},{x:520,y:140,n:"Client\n客户端",c:"#f0883e"},{x:890,y:140,n:"Server\n服务端·工具",c:"#3fb950"}];
+function tri(){
+  tx.clearRect(0,0,1040,260);
+  // 连线 Host-Client-Server
+  tx.strokeStyle="#283143";tx.lineWidth=2;
+  tx.beginPath();tx.moveTo(220,140);tx.lineTo(450,140);tx.moveTo(590,140);tx.lineTo(820,140);tx.stroke();
+  // 当前报文方向高亮
+  if(i>0){const cur=SCRIPT[i-1].p;const send=cur!=="O"&&cur!=="F";const c=COL[cur];
+    tx.strokeStyle=c;tx.lineWidth=3;tx.beginPath();
+    if(send){tx.moveTo(590,120);tx.lineTo(820,120);}else{tx.moveTo(820,160);tx.lineTo(590,160);}tx.stroke();
+    tx.fillStyle=c;tx.font="bold 12px sans-serif";tx.textAlign="center";tx.fillText(NAME[cur],705,send?110:185);}
+  for(const nd of NODES){
+    tx.fillStyle=nd.c+"22";tx.strokeStyle=nd.c;tx.lineWidth=2;
+    tx.beginPath();tx.roundRect(nd.x-70,nd.y-40,140,80,12);tx.fill();tx.stroke();
+    tx.fillStyle=nd.c;tx.font="bold 13px sans-serif";tx.textAlign="center";
+    nd.n.split("\n").forEach((s,k)=>tx.fillText(s,nd.x,nd.y-6+k*20));
+  }
+  tx.fillStyle="#8b949e";tx.font="12px sans-serif";tx.textAlign="left";
+  tx.fillText("JSON-RPC over stdio/SSE：Client 1对1 连 Server，三步握手雷打不动",16,240);
+}
+function msgs(){
+  mx.clearRect(0,0,1040,220);mx.textAlign="left";
+  for(let k=0;k<i;k++){const y=14+k*28;
+    mx.fillStyle=COL[SCRIPT[k].p]+"22";mx.strokeStyle=COL[SCRIPT[k].p];mx.lineWidth=1;
+    mx.beginPath();mx.roundRect(16,y,1008,24,6);mx.fill();mx.stroke();
+    mx.fillStyle="#e6edf3";mx.font="12px monospace";mx.fillText(SCRIPT[k].msg.slice(0,108),28,y+16);}
+  if(i===0){mx.fillStyle="#5b6675";mx.font="13px sans-serif";mx.fillText("点「单步执行」看 JSON-RPC 报文一条条飞…",24,30);}
+}
+function stat(){const el=document.getElementById("stat");el.textContent=i>=SCRIPT.length?`第 ${i} 步 / 握手完成 ✅`:`第 ${i} 步 / ${i?SCRIPT[i-1].t:"等待开始"}`;}
+function draw(){tri();msgs();stat();}
+document.getElementById("step").onclick=()=>{if(i<SCRIPT.length)i++;draw();};
+document.getElementById("reset").onclick=()=>{i=0;draw();};
+draw();
+</script>
+</body>
+</html>

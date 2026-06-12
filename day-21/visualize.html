@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 21 · Embedding 语义相似度可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#f85149}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1.3fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  p.note{color:var(--mut);font-size:13px;margin:10px 0 0}
+  .rank{display:flex;flex-direction:column;gap:7px}
+  .item{display:flex;align-items:center;gap:8px;font-size:13px}
+  .num{width:18px;color:var(--mut)}
+  .bar{flex:1;height:14px;background:#0b0f15;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--accent)}
+  .sc{width:48px;text-align:right;font-variant-numeric:tabular-nums;color:var(--ok)}
+  .txt{flex:1.6}
+  .top i{background:var(--ok)} .top .sc{color:var(--ok)}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 21 · 语义即坐标：句向量怎么"抱团"</h1>
+  <div class="sub">6 句话嵌成 768 维向量、降到 2D：意思近的点自然靠近，换 query 看余弦排行实时变</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 句向量 2D 投影 <small>真实 nomic-embed-text 余弦 → MDS 降维。tech vs 生活两团</small></h2>
+    <canvas id="map" height="300"></canvas>
+    <p class="note">距离≈语义差异：技术句挤一团、生活句挤一团。★query 是发光点，连线越亮=越像。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 余弦相似度排行 <small>query 对每句的真实余弦，降序</small></h2>
+    <div class="chips" id="qchips">
+      <span class="chip on" data-q="0">怎样让接口更快</span>
+      <span class="chip" data-q="1">去哪里玩比较好</span>
+      <span class="chip" data-q="2">吃什么晚饭</span>
+    </div>
+    <div class="rank" id="rank" style="margin-top:12px"></div>
+    <p class="note">零字面重叠也能命中：换 query 看高分项整体换一拨，这就是"语义检索=按余弦 ORDER BY"。</p>
+  </div>
+</div>
+<script>
+// 真实数据：六句句子 + nomic-embed-text 算出的 pairwise 余弦 + 3 个 query 的余弦
+const S=["加缓存降低 API 接口耗时","接口接 Redis 降耗时","优化数据库 SQL 提速","今天天气真好去散步","周末去爬山看日出","晚饭吃碗牛肉面"];
+const PAIR=[[1,.796,.67,.556,.525,.587],[.796,1,.582,.555,.574,.544],[.67,.582,1,.644,.667,.739],[.556,.555,.644,1,.669,.615],[.525,.574,.667,.669,1,.628],[.587,.544,.739,.615,.628,.587]];
+const QS=["怎样让接口更快","去哪里玩比较好","吃什么晚饭"];
+const QC=[[.85,.879,.619,.538,.55,.581],[.56,.474,.634,.568,.562,.613],[.667,.621,.855,.65,.695,.713]];
+let q=0;
+// 由 pairwise 余弦做简易 MDS：相似->近、不相似->远，几轮力导出 2D 坐标
+let P=S.map((_,i)=>[Math.cos(i*1.1)*120,Math.sin(i*1.7)*100]);
+function layout(){for(let it=0;it<400;it++)for(let i=0;i<6;i++)for(let j=0;j<6;j++){if(i==j)continue;const tgt=(1-PAIR[i][j])*340;let dx=P[j][0]-P[i][0],dy=P[j][1]-P[i][1],d=Math.hypot(dx,dy)||1,f=(d-tgt)/d*0.05;P[i][0]+=dx*f;P[i][1]+=dy*f}}
+layout();
+const mc=document.getElementById("map");
+function draw(){const x=mc.getContext("2d"),w=mc.clientWidth,h=mc.clientHeight;mc.width=w*2;mc.height=h*2;x.scale(2,2);x.clearRect(0,0,w,h);
+  const cx=w/2,cy=h/2,sc=QC[q];const top=sc.indexOf(Math.max(...sc));
+  // query 节点放中心，连线到各句，亮度=相似度
+  P.forEach((p,i)=>{const px=cx+p[0],py=cy+p[1];x.strokeStyle="#58a6ff";x.globalAlpha=Math.max(0,(sc[i]-.45)/.55);x.lineWidth=1+sc[i]*3;x.beginPath();x.moveTo(cx,cy);x.lineTo(px,py);x.stroke()});
+  x.globalAlpha=1;P.forEach((p,i)=>{const px=cx+p[0],py=cy+p[1],tech=i<3;x.fillStyle=i===top?"#3fb950":tech?"#1f6feb":"#8b5d2e";x.beginPath();x.arc(px,py,i===top?13:10,0,7);x.fill();x.fillStyle="#cfe3ff";x.font="11px sans-serif";x.textAlign="center";x.fillText(S[i],px,py+22)});
+  x.fillStyle="#f0883e";x.beginPath();x.arc(cx,cy,9,0,7);x.fill();x.fillStyle="#f0883e";x.font="bold 12px sans-serif";x.fillText("query: "+QS[q],cx,cy-16)}
+function rank(){const sc=QC[q],ord=sc.map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]);
+  document.getElementById("rank").innerHTML=ord.map((p,r)=>`<div class="item ${r==0?'top':''}"><span class="num">${r+1}</span><span class="txt">${S[p[1]]}</span><span class="bar"><i style="width:${(p[0]*100).toFixed(0)}%"></i></span><span class="sc">${p[0].toFixed(3)}</span></div>`).join("")}
+document.getElementById("qchips").onclick=e=>{if(e.target.dataset.q==null)return;q=+e.target.dataset.q;document.querySelectorAll("#qchips .chip").forEach(c=>c.classList.toggle("on",c===e.target));draw();rank()};
+draw();rank();window.onresize=draw;
+</script>
+</body>
+</html>

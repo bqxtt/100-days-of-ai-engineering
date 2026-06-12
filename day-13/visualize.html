@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 13 · 高级 Prompt 技巧可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#f85149;--vio:#a371f7}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  #steps{margin-top:10px;min-height:200px}
+  .step{border-radius:8px;padding:7px 11px;margin:7px 0;font-size:13px;opacity:0;transform:translateY(6px);transition:.35s;border-left:3px solid}
+  .step.show{opacity:1;transform:none}
+  .t{background:#16221b;border-color:var(--ok)} .a{background:#2a1c0f;border-color:var(--warn)}
+  .o{background:#0f1c2a;border-color:var(--accent)} .f{background:#1c1430;border-color:var(--vio);font-weight:600}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 13 · 给 CoT 加保险</h1>
+  <div class="sub">Tree of Thoughts 搜索回溯 · ReAct 想做交替——两招都能动手玩</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① Tree of Thoughts <small>多分支思路 → 打分剪枝 → 沿最优回溯下钻</small></h2>
+    <canvas id="tot" height="300"></canvas>
+    <div class="row">
+      <button id="totRun">▶ 搜索</button>
+      <button id="totReset" class="ghost">重置</button>
+      <span>已扩展 <span class="stat" id="totN">0</span> 个想法</span>
+    </div>
+    <p class="note">每个节点是一条思路，分数=自评好坏；绿粗=被选中下钻，灰=剪掉。差就回溯换分支——这是 ToT 比直链 CoT 强的地方。</p>
+  </div>
+
+  <div class="card">
+    <h2>② ReAct 循环 <small>Thought→Action→Observation→…→Final Answer</small></h2>
+    <div id="steps"></div>
+    <div class="row">
+      <button id="reRun">▶ 运行</button>
+      <button id="reReset" class="ghost">重置</button>
+    </div>
+    <p class="note">想一步(绿)→调一次工具(橙)→拿回反馈(蓝)，循环到出答案(紫)。去掉橙/蓝就退化成 CoT——工具反馈是 ReAct 的灵魂。</p>
+  </div>
+</div>
+<script>
+// ---------- ① ToT 树搜索 ----------
+const tot=document.getElementById('tot');
+let nodes=[],links=[],totStep=0,totTimer=null;
+function fit(c){c.width=c.clientWidth*2;c.height=c.clientHeight*2;const x=c.getContext('2d');x.scale(2,2);return x}
+function buildTree(){ // 3层2叉，每节点带分数；高分路被选中
+  nodes=[{id:0,d:0,x:.5,score:1,pick:1,par:-1}];links=[];
+  const leaf=[{a:.18,s:.4},{b:.32,s:.7},{c:.62,s:.55},{d:.82,s:.9}];
+  const L2=[{x:.32,s:.55,par:0},{x:.72,s:.85,par:0}];
+  L2.forEach((n,i)=>nodes.push({id:nodes.length,d:1,x:n.x,score:n.s,pick:i===1,par:0}));
+  [[.20,.45,1],[.42,.60,1],[.58,.70,2],[.86,.95,2]].forEach(([x,s,p])=>nodes.push({id:nodes.length,d:2,x,score:s,pick:0,par:p}));
+  nodes[6].pick=1;
+  nodes.forEach(n=>{if(n.par>=0)links.push([n.par,n.id])});
+}
+function drawTot(){const x=fit(tot),w=tot.clientWidth,h=tot.clientHeight;x.clearRect(0,0,w,h);
+  const visN=nodes.slice(0,totStep);const visIds=new Set(visN.map(n=>n.id));
+  links.forEach(([a,b])=>{if(!visIds.has(a)||!visIds.has(b))return;const A=nodes[a],B=nodes[b];const pk=B.pick&&A.pick;
+    x.strokeStyle=pk?'#3fb950':'#283143';x.lineWidth=pk?3:1;x.beginPath();x.moveTo(A.x*w,30+A.d*100);x.lineTo(B.x*w,30+B.d*100);x.stroke()});
+  visN.forEach(n=>{const cx=n.x*w,cy=30+n.d*100;x.beginPath();x.arc(cx,cy,15,0,7);
+    x.fillStyle=n.pick?'#16221b':'#1a1f27';x.strokeStyle=n.pick?'#3fb950':(n.score<.5?'#f85149':'#8b949e');x.lineWidth=n.pick?3:1.5;x.fill();x.stroke();
+    x.fillStyle=n.pick?'#3fb950':'#8b949e';x.font='11px sans-serif';x.textAlign='center';x.fillText(n.score.toFixed(2),cx,cy+4)});
+  document.getElementById('totN').textContent=Math.max(0,totStep-1);}
+function totReset(){if(totTimer)clearInterval(totTimer);buildTree();totStep=1;drawTot()}
+document.getElementById('totRun').onclick=()=>{totReset();totTimer=setInterval(()=>{totStep++;drawTot();if(totStep>=nodes.length)clearInterval(totTimer)},500)};
+document.getElementById('totReset').onclick=totReset;
+
+// ---------- ② ReAct 循环 ----------
+const trace=[['t','Thought: 先算买进后的总数 23+6'],['a','Action: calc[23 + 6]'],['o','Observation: 29'],
+  ['t','Thought: 再减去午餐用掉的 29-20'],['a','Action: calc[29 - 20]'],['o','Observation: 9'],['f','Final Answer: 9 ✅']];
+const box=document.getElementById('steps');let reTimer=null;
+function reReset(){if(reTimer)clearInterval(reTimer);box.innerHTML='';trace.forEach(([c,t])=>{const d=document.createElement('div');d.className='step '+c;d.textContent=t;box.appendChild(d)})}
+document.getElementById('reRun').onclick=()=>{reReset();let i=0;reTimer=setInterval(()=>{box.children[i].classList.add('show');if(++i>=trace.length)clearInterval(reTimer)},420)};
+document.getElementById('reReset').onclick=reReset;
+
+totReset();reReset();window.onresize=drawTot;
+</script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 38 · LangGraph 图状态机：节点 / 条件路由 / 循环</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:22px}
+  .sub{color:var(--mut);margin-top:6px;font-size:13px}
+  .wrap{max-width:980px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:15px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  code{color:var(--accent)}
+  .stat{font-family:ui-monospace,Menlo,monospace;font-size:13px;color:var(--mut)}
+</style></head>
+<body>
+<header>
+  <h1>🕸️ LangGraph 图状态机：节点 · 条件路由 · 循环</h1>
+  <div class="sub">点「单步」走一遍 agent→router→tool/end；红边是回边（循环），橙边是条件分支</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>状态图（State Graph）</h2>
+    <canvas id="cv" width="940" height="380"></canvas>
+    <div class="row">
+      <button id="step">单步执行 ▶</button>
+      <button class="ghost" id="reset">重置</button>
+      <span class="stat" id="stat"></span>
+    </div>
+    <div class="row">
+      <span style="color:var(--mut);font-size:13px">问题需要查几次：</span>
+      <div class="chips">
+        <span class="chip on" data-n="2">2 次（多轮循环）</span>
+        <span class="chip" data-n="1">1 次（够了就停）</span>
+        <span class="chip" data-n="4">4 次（撞步数上限）</span>
+      </div>
+    </div>
+    <p class="note">链是直线：走完即终。图能<b>回边</b>（红线 tool→agent，循环）+ <b>分支</b>（橙线 router 看 state 选 tool 或 END），所以才装得下 Agent 的"想一步查一步"。步数 ≥ 上限强制收尾，防死循环。</p>
+  </div>
+</div>
+<script>
+const cv=document.getElementById("cv"),x=cv.getContext("2d");
+const N={ // 节点：id->坐标/标签/色
+  start:{x:90,y:190,r:30,t:"START",c:"#8b949e"},
+  agent:{x:300,y:190,r:42,t:"agent",c:"#58a6ff"},
+  router:{x:520,y:190,r:42,t:"router",c:"#f0883e"},
+  tool:{x:520,y:320,r:40,t:"tool",c:"#3fb950"},
+  end:{x:850,y:190,r:30,t:"END",c:"#da3633"},
+};
+let need=2,cur="start",step=0,trail=[];
+function reset(){cur="start";step=0;trail=[];draw();stat();}
+function stat(){document.getElementById("stat").textContent=`当前=${cur}  step=${step}  路径: ${trail.join("→")||"—"}`;}
+// 推进：一次状态转移
+function next(){
+  if(cur==="start"){cur="agent";}
+  else if(cur==="agent"){cur="router";}
+  else if(cur==="router"){ // 条件路由：看 step 决定去 tool 还是 end
+    if(step>=4){cur="end";}            // 上限守门
+    else if(step>=need){cur="end";}    // agent 说够了
+    else{cur="tool";}                  // 还要查
+  }else if(cur==="tool"){step++;cur="agent";} // 回边：循环
+  else if(cur==="end"){cur="start";step=0;trail=[];}
+  trail.push(cur);draw();stat();
+}
+function edge(a,b,col,dash,curve){
+  const A=N[a],B=N[b];x.strokeStyle=col;x.lineWidth=2;x.setLineDash(dash?[7,5]:[]);
+  x.beginPath();
+  let mx=(A.x+B.x)/2,my=(A.y+B.y)/2-(curve||0);
+  x.moveTo(A.x,A.y);x.quadraticCurveTo(mx,my,B.x,B.y);x.stroke();x.setLineDash([]);
+  // 箭头
+  const ang=Math.atan2(B.y-my,B.x-mx);x.fillStyle=col;
+  x.beginPath();x.moveTo(B.x-Math.cos(ang)*B.r,B.y-Math.sin(ang)*B.r);
+  x.lineTo(B.x-Math.cos(ang)*B.r-Math.cos(ang-.4)*12,B.y-Math.sin(ang)*B.r-Math.sin(ang-.4)*12);
+  x.lineTo(B.x-Math.cos(ang)*B.r-Math.cos(ang+.4)*12,B.y-Math.sin(ang)*B.r-Math.sin(ang+.4)*12);
+  x.fill();
+}
+function node(id){const n=N[id],hot=cur===id;x.beginPath();x.arc(n.x,n.y,n.r,0,7);
+  x.fillStyle=hot?n.c:"#161b22";x.strokeStyle=n.c;x.lineWidth=hot?4:2;x.fill();x.stroke();
+  x.fillStyle=hot?"#06121f":"#e6edf3";x.font="bold 14px sans-serif";x.textAlign="center";x.textBaseline="middle";
+  x.fillText(n.t,n.x,n.y);}
+function draw(){x.clearRect(0,0,940,380);
+  edge("start","agent","#8b949e",0,0);
+  edge("agent","router","#58a6ff",0,0);
+  edge("router","tool","#f0883e",1,-40);     // 条件分支：继续查
+  edge("router","end","#f0883e",1,0);        // 条件分支：结束
+  edge("tool","agent","#da3633",0,90);       // 回边：循环
+  for(const k in N)node(k);
+  x.fillStyle="#8b949e";x.font="12px sans-serif";x.textAlign="left";
+  x.fillText("橙=条件路由(分支)",560,120);x.fillText("红=回边(循环)",380,300);
+}
+document.getElementById("step").onclick=next;
+document.getElementById("reset").onclick=reset;
+document.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{
+  document.querySelectorAll(".chip").forEach(z=>z.classList.remove("on"));c.classList.add("on");need=+c.dataset.n;reset();});
+reset();
+</script>
+</body>
+</html>

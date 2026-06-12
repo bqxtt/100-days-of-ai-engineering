@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 24 · 结构化分块树</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--vio:#a371f7}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:380px 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:15px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  textarea{width:100%;height:340px;background:#0b0f15;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px;font:12.5px/1.5 ui-monospace,Menlo,monospace;resize:vertical}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--mut)}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:1px}
+  p.note{color:var(--mut);font-size:12.5px;margin:8px 0 0}
+  @media(max-width:840px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 24 · Markdown → 结构化分块树</h1>
+  <div class="sub">顺着标题层级切，表格序列化、图片用 caption——每块自带"标题路径"。改左边文档看右边实时变。</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>① 文档 <small>编辑试试：加个 ## 标题 / 表格 / 图片</small></h2>
+    <textarea id="src"># 销售周报
+## macOS 安装
+先装好 ollama，再拉 nomic-embed-text。
+## 区域销量
+| 城市 | 销量 | 同比 |
+| 上海 | 88 | +12% |
+| 北京 | 64 | -3% |
+![各区域月度趋势折线图](trend.png)
+## 备注
+表格行展开成"列名=值"才好嵌入。</textarea>
+    <p class="note">标题=块边界；正文/表格/图各成一块，都带上标题路径作元数据。</p>
+  </div>
+  <div class="card">
+    <h2>② 分块树 <small>缩进=标题层级 · 颜色=块类型</small></h2>
+    <canvas id="cv" height="420"></canvas>
+    <div class="legend">
+      <span><i class="dot" style="background:#58a6ff"></i>正文块</span>
+      <span><i class="dot" style="background:#3fb950"></i>表格块(序列化)</span>
+      <span><i class="dot" style="background:#a371f7"></i>图片块(caption)</span>
+      <span><i class="dot" style="background:#283143"></i>标题节点</span>
+    </div>
+    <p class="note">这就是 practice.py 的 chunk_markdown 在做的：不无脑按长度切，顺着结构切。</p>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('cv'),src=document.getElementById('src');
+function parse(md){
+  const out=[],path=[];let buf=[];
+  const flush=(t='text')=>{const x=buf.join('\n').trim();if(x)out.push({type:t,heading:path.join(' > '),text:x});buf=[]};
+  for(const ln of md.split('\n')){
+    if(ln.startsWith('#')){flush();const lv=ln.length-ln.replace(/^#+/,'').length;path.splice(lv-1);path[lv-1]=ln.replace(/^#+\s*/,'');out.push({type:'h',lv,heading:path.join(' > '),text:path[lv-1]});}
+    else if(ln.startsWith('|'))buf.push(ln);
+    else if(ln.startsWith('!['))  {flush();const m=ln.match(/\[(.*?)\]/);out.push({type:'image',heading:path.join(' > '),text:m?m[1]:'图片'});}
+    else buf.push(ln);
+  }
+  flush();
+  return out.map(c=>{if(c.type==='text'&&c.text.split('\n').filter(r=>r.startsWith('|')).length>1)c.type='table';return c;});
+}
+const col={h:'#283143',text:'#58a6ff',table:'#3fb950',image:'#a371f7'};
+function draw(){
+  const w=cv.clientWidth;const items=parse(src.value);cv.width=w*2;cv.height=Math.max(420,items.length*40+30)*2;
+  const x=cv.getContext('2d');x.scale(2,2);x.clearRect(0,0,w,cv.height);
+  let y=22;for(const c of items){const dep=c.heading?c.heading.split(' > ').length:1;const ind=20+(c.type==='h'?(c.lv-1):dep)*24;
+    if(c.type==='h'){x.fillStyle='#e6edf3';x.font='bold 14px sans-serif';x.fillText('§ '+c.text,ind,y);}
+    else{x.fillStyle=col[c.type];x.fillRect(ind,y-11,12,12);x.fillStyle='#c9d1d9';x.font='12.5px sans-serif';
+      const tag={text:'正文',table:'表格',image:'图'}[c.type];x.fillText(`[${tag}] `+c.text.replace(/\n/g,' ').slice(0,46),ind+18,y);}
+    y+=36;}
+}
+src.oninput=draw;window.onresize=draw;draw();
+</script>
+</body>
+</html>

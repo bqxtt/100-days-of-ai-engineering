@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 45 · CrewAI vs AutoGen — 流水线 vs 群聊</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 45 · CrewAI vs AutoGen</h1>
+  <div class="sub">左：CrewAI 流水线（role/task/crew，步数固定）｜右：AutoGen 群聊（对话来回，聊到 DONE 才停）</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>① CrewAI = 流水线 <small>角色+任务顺序跑，3 步写死</small></h2>
+    <canvas id="crew" width="1040" height="170"></canvas>
+  </div>
+  <div class="card">
+    <h2>② AutoGen = 群聊 <small>两 agent 来回，蓝=提议 橙=挑刺 绿=DONE</small></h2>
+    <canvas id="chat" width="1040" height="200"></canvas>
+    <div class="row">
+      <button id="step">▶ 单步执行</button>
+      <button class="ghost" id="reset">重置</button>
+      <span class="stat" id="stat">第 0 步 / 等待开始</span>
+    </div>
+    <p class="note">Crew 永远 3 步（可预测）；GroupChat 步数不定，本例聊到第 4 句收敛 DONE——这就是「写死流程 vs 涌现流程」。</p>
+  </div>
+</div>
+<script>
+const cc=document.getElementById("crew"),cx=cc.getContext("2d");
+const gc=document.getElementById("chat"),gx=gc.getContext("2d");
+const CREW=[{r:"研究员",t:"列 3 个要点",c:"#58a6ff"},{r:"作者",t:"写成科普段",c:"#f0883e"},{r:"审稿",t:"定稿",c:"#3fb950"}];
+const GROUP=[{w:"提议者",t:"先介绍索引概念+场景",c:"#58a6ff"},{w:"挑刺者",t:"缺反例，补不加索引后果",c:"#f0883e"},{w:"提议者",t:"已补反例，方案完整",c:"#58a6ff"},{w:"挑刺者",t:"够好了 → DONE",c:"#3fb950"}];
+let i=0;  // 群聊已显示句数（Crew 全程展示，跟着流程上限点亮）
+function wrap(c,t,x,y,w,lh){let ln="",yy=y;for(const ch of t){if(c.measureText(ln+ch).width>w){c.fillText(ln,x,yy);ln=ch;yy+=lh;}else ln+=ch;}c.fillText(ln,x,yy);}
+function crew(){
+  cx.clearRect(0,0,1040,170);const bw=300,gap=30,y=50;
+  for(let k=0;k<3;k++){const x=20+k*(bw+gap),on=Math.min(i,3)>k;
+    cx.fillStyle=on?CREW[k].c+"33":"#11161f";cx.strokeStyle=CREW[k].c;cx.lineWidth=on?3:1.5;
+    cx.beginPath();cx.roundRect(x,y,bw,80,10);cx.fill();cx.stroke();
+    cx.fillStyle=on?CREW[k].c:"#5b6675";cx.font="bold 14px sans-serif";cx.textAlign="center";cx.fillText(CREW[k].r,x+bw/2,y+30);
+    cx.fillStyle=on?"#e6edf3":"#5b6675";cx.font="12px sans-serif";cx.fillText(CREW[k].t,x+bw/2,y+54);
+    if(k<2){cx.strokeStyle=on?"#3fb950":"#283143";cx.beginPath();cx.moveTo(x+bw,y+40);cx.lineTo(x+bw+gap,y+40);cx.stroke();}}
+  cx.fillStyle="#8b949e";cx.font="12px sans-serif";cx.textAlign="left";cx.fillText("产物逐级喂下游，顺序固定 3 步，无自由发言（sequential）",20,150);
+}
+function chat(){
+  gx.clearRect(0,0,1040,200);gx.textAlign="left";
+  for(let k=0;k<Math.min(i,4);k++){const left=GROUP[k].w==="提议者",x=left?20:540,y=10+k*44;
+    gx.fillStyle=GROUP[k].c+"22";gx.strokeStyle=GROUP[k].c;gx.lineWidth=1.5;
+    gx.beginPath();gx.roundRect(x,y,480,38,8);gx.fill();gx.stroke();
+    gx.fillStyle=GROUP[k].c;gx.font="bold 12px sans-serif";gx.fillText(GROUP[k].w,x+12,y+16);
+    gx.fillStyle="#e6edf3";gx.font="12px sans-serif";gx.fillText(GROUP[k].t,x+12,y+30);}
+  if(i===0){gx.fillStyle="#5b6675";gx.font="13px sans-serif";gx.fillText("点「单步执行」让两 agent 来回…",24,30);}
+}
+function stat(){const e=document.getElementById("stat");e.textContent=i>=4?`第 4 步 / 群聊收敛 DONE ✅（Crew 同样跑完 3 步）`:`第 ${i} 步 / ${i?GROUP[i-1].w:"等待开始"}`;}
+function draw(){crew();chat();stat();}
+document.getElementById("step").onclick=()=>{if(i<4)i++;draw();};
+document.getElementById("reset").onclick=()=>{i=0;draw();};
+draw();
+</script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 1 · 神经网络可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  .lvl{color:var(--warn)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 1 · 把神经网络拆开看</h1>
+  <div class="sub">激活函数 → 网络结构 → 训练时 loss 怎么降的，全都能动手玩</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 激活函数 <small>没有它，多层会塌成一层</small></h2>
+    <canvas id="act" height="220"></canvas>
+    <div class="chips" id="actChips">
+      <span class="chip on" data-f="relu">ReLU</span>
+      <span class="chip" data-f="sigmoid">Sigmoid</span>
+      <span class="chip" data-f="tanh">Tanh</span>
+      <span class="chip" data-f="gelu">GELU(Transformer)</span>
+    </div>
+    <p class="note">隐藏层引入非线性，网络才能拟合弯曲的边界。Transformer 用 GELU。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 网络结构 <small>2→4→1 前馈，连线粗细=权重大小</small></h2>
+    <canvas id="net" height="220"></canvas>
+    <p class="note">数据从左往右流，不回头——这就是"前馈"。训练时连线粗细会变。</p>
+  </div>
+
+  <div class="card full">
+    <h2>③ 实时训练 <small>左:loss下降 右:决策边界。目标学会 y=(x1 AND x2)</small></h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <canvas id="loss" height="220"></canvas>
+      <canvas id="bound" height="220"></canvas>
+    </div>
+    <div class="row">
+      <button id="run">▶ 训练</button>
+      <button id="reset" class="ghost">重置</button>
+      <label>学习率 lr <span class="lvl" id="lrv">0.50</span></label>
+      <input type="range" id="lr" min="0.01" max="2" step="0.01" value="0.5" style="width:180px">
+      <span>step <span class="stat" id="step">0</span></span>
+      <span>loss <span class="stat" id="lossv">—</span></span>
+    </div>
+    <p class="note">把 lr 拉到很大(>1.5)看 loss 抖/爆，拉到很小(0.02)看它学得慢——对应思考题2。</p>
+  </div>
+</div>
+<script>
+// ---------- 激活函数 ----------
+const erf=x=>{const t=1/(1+0.3275911*Math.abs(x));const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x);return x<0?-y:y};
+const F={relu:x=>Math.max(0,x),sigmoid:x=>1/(1+Math.exp(-x)),tanh:x=>Math.tanh(x),gelu:x=>0.5*x*(1+erf(x/Math.SQRT2))};
+let act='relu';
+const ac=document.getElementById('act'),acx=ac.getContext('2d');
+function fit(c){c.width=c.clientWidth*2;c.height=c.clientHeight*2;c.getContext('2d').scale(2,2)}
+function drawAct(){const w=ac.clientWidth,h=ac.clientHeight,x=acx;ac.width=w*2;ac.height=h*2;x.scale(2,2);x.clearRect(0,0,w,h);
+  x.strokeStyle='#283143';x.beginPath();x.moveTo(0,h/2);x.lineTo(w,h/2);x.moveTo(w/2,0);x.lineTo(w/2,h);x.stroke();
+  x.strokeStyle='#58a6ff';x.lineWidth=2.5;x.beginPath();for(let p=0;p<=w;p++){const xv=(p-w/2)/40,yv=F[act](xv);const py=h/2-yv*40;p?x.lineTo(p,py):x.moveTo(p,py)}x.stroke()}
+document.getElementById('actChips').onclick=e=>{if(!e.target.dataset.f)return;act=e.target.dataset.f;document.querySelectorAll('#actChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.f===act));drawAct()};
+
+// ---------- 网络 + 训练 ----------
+const X=[[0,0],[0,1],[1,0],[1,1]],Y=[0,0,0,1];
+let W1,b1,W2,b2,step=0,hist=[],run=false;const rnd=()=>Math.random()*2-1;
+function reset(){W1=[[rnd(),rnd(),rnd(),rnd()],[rnd(),rnd(),rnd(),rnd()]];b1=[0,0,0,0];W2=[rnd(),rnd(),rnd(),rnd()];b2=0;step=0;hist=[];draw()}
+const relu=z=>Math.max(0,z),sig=z=>1/(1+Math.exp(-z));
+function fwd(x){const a1=[0,0,0,0];for(let j=0;j<4;j++)a1[j]=relu(x[0]*W1[0][j]+x[1]*W1[1][j]+b1[j]);let z=b2;for(let j=0;j<4;j++)z+=a1[j]*W2[j];return{a1,p:sig(z)}}
+function train(){const lr=+lr_.value;let L=0;const dW1=[[0,0,0,0],[0,0,0,0]],db1=[0,0,0,0],dW2=[0,0,0,0];let db2=0;
+  for(let i=0;i<4;i++){const{a1,p}=fwd(X[i]);L+=(p-Y[i])**2/4;const dz2=2*(p-Y[i])/4*p*(1-p);for(let j=0;j<4;j++){dW2[j]+=a1[j]*dz2;const dz1=dz2*W2[j]*(a1[j]>0?1:0);dW1[0][j]+=X[i][0]*dz1;dW1[1][j]+=X[i][1]*dz1;db1[j]+=dz1}db2+=dz2}
+  for(let j=0;j<4;j++){W2[j]-=lr*dW2[j];b1[j]-=lr*db1[j];W1[0][j]-=lr*dW1[0][j];W1[1][j]-=lr*dW1[1][j]}b2-=lr*db2;step++;hist.push(L);if(hist.length>300)hist.shift();return L}
+// canvases
+const nc=document.getElementById('net'),lc=document.getElementById('loss'),bc=document.getElementById('bound');
+function clear(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+function drawNet(){const x=clear(nc),w=nc.clientWidth,h=nc.clientHeight;const L=[[0.15,[.3,.7]],[0.5,[.18,.4,.6,.82]],[0.85,[.5]]];const px=L.map(l=>l[0]*w),py=L.map(l=>l[1].map(v=>v*h));
+  x.lineWidth=1;for(let j=0;j<4;j++)for(let i=0;i<2;i++){x.strokeStyle=W1[i][j]>0?'#3fb950':'#f0883e';x.globalAlpha=Math.min(1,Math.abs(W1[i][j]));x.lineWidth=Math.min(4,Math.abs(W1[i][j])*2);x.beginPath();x.moveTo(px[0],py[0][i]);x.lineTo(px[1],py[1][j]);x.stroke()}
+  for(let j=0;j<4;j++){x.strokeStyle=W2[j]>0?'#3fb950':'#f0883e';x.globalAlpha=Math.min(1,Math.abs(W2[j]));x.lineWidth=Math.min(4,Math.abs(W2[j])*2);x.beginPath();x.moveTo(px[1],py[1][j]);x.lineTo(px[2],py[2][0]);x.stroke()}
+  x.globalAlpha=1;x.fillStyle='#1f6feb';py.forEach((col,li)=>col.forEach(yy=>{x.beginPath();x.arc(px[li],yy,9,0,7);x.fill();}))}
+function drawLoss(){const x=clear(lc),w=lc.clientWidth,h=lc.clientHeight;x.strokeStyle='#283143';x.strokeRect(0,0,w,h);if(hist.length<2)return;x.strokeStyle='#3fb950';x.lineWidth=2;x.beginPath();hist.forEach((v,i)=>{const px=i/300*w,py=h-Math.min(h,v/0.3*h);i?x.lineTo(px,py):x.moveTo(px,py)});x.stroke();x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText('loss',6,14)}
+function drawBound(){const x=clear(bc),w=bc.clientWidth,h=bc.clientHeight,N=28;for(let a=0;a<N;a++)for(let b=0;b<N;b++){const p=fwd([a/(N-1),1-b/(N-1)]).p;x.fillStyle=`rgba(${88-p*60},${166*p+40},${80+p*100},.5)`;x.fillRect(a/N*w,b/N*h,w/N+1,h/N+1)}X.forEach((pt,i)=>{x.fillStyle=Y[i]?'#3fb950':'#f0883e';x.beginPath();x.arc(pt[0]*w,(1-pt[1])*h,7,0,7);x.fill();x.strokeStyle='#fff';x.stroke()})}
+function draw(){drawNet();drawLoss();drawBound();document.getElementById('step').textContent=step;document.getElementById('lossv').textContent=hist.length?hist[hist.length-1].toFixed(4):'—'}
+function loop(){if(run){for(let k=0;k<5;k++)train();draw();requestAnimationFrame(loop)}}
+const lr_=document.getElementById('lr');lr_.oninput=()=>document.getElementById('lrv').textContent=(+lr_.value).toFixed(2);
+document.getElementById('run').onclick=e=>{run=!run;e.target.textContent=run?'⏸ 暂停':'▶ 训练';if(run)loop()};
+document.getElementById('reset').onclick=()=>{run=false;document.getElementById('run').textContent='▶ 训练';reset()};
+drawAct();reset();window.onresize=()=>{drawAct();draw()};
+</script>
+</body>
+</html>

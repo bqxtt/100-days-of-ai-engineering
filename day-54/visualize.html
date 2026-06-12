@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 54 · Agent 生产化 — 容错/扩展/成本控制可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 54 · Agent 生产化部署</h1>
+  <div class="sub">一条请求过三道护甲：💾缓存 → ⏱️超时调用 → 🔁退避重试 → 🛟降级，账单随缓存命中实时下降</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>① 请求过护甲 <small>绿=命中/成功 橙=重试 红=降级 灰=未到</small></h2>
+    <canvas id="flow" width="1040" height="240"></canvas>
+    <div class="row">
+      <button id="step">▶ 单步执行</button>
+      <button class="ghost" id="reset">重置</button>
+      <span class="stat" id="stat">第 0 步 / 等待开始</span>
+    </div>
+    <p class="note">第3问与第1问重复 → 缓存命中零调用；第2问故意故障 → 重试救回。容错+成本控制，核心循环不动。</p>
+  </div>
+  <div class="card">
+    <h2>② 账单 <small>真调一次=¥1，缓存命中=¥0</small></h2>
+    <canvas id="bill" width="1040" height="120"></canvas>
+  </div>
+</div>
+<script>
+const fc=flow.getContext("2d"), bc=bill.getContext("2d");
+const COL={t:"#58a6ff",ok:"#3fb950",retry:"#f0883e",fb:"#da3633",mut:"#5b6675"};
+// 每步：阶段标签 + 是否真调ollama(¥1) + 颜色 + 旁注
+const S=[
+ {p:"t",  c:0,col:"ok",   t:"Q1 进 runner",      m:"缓存未命中 → 真调 LLM"},
+ {p:"ok", c:1,col:"ok",   t:"Q1 ⏱️调用成功",     m:"60s 超时内返回，存缓存"},
+ {p:"t",  c:0,col:"mut",  t:"Q2 进 runner",      m:"缓存未命中 → 真调 LLM"},
+ {p:"r",  c:0,col:"retry",t:"Q2 故障→🔁退避",   m:"1s→2s 重试，避雪崩"},
+ {p:"ok", c:1,col:"ok",   t:"Q2 重试救回",       m:"第2次成功，没崩"},
+ {p:"hit",c:0,col:"ok",   t:"Q3 💾缓存命中",     m:"=Q1 → 零调用，省¥1"},
+];
+let i=0;
+function box(c,x,y,w,h,col,fill){c.fillStyle=col+(fill||"22");c.strokeStyle=col;c.lineWidth=2;c.beginPath();c.roundRect(x,y,w,h,10);c.fill();c.stroke();}
+function flowD(){
+ fc.clearRect(0,0,1040,240);const w=150,gap=20,y=70;
+ for(let k=0;k<S.length;k++){const x=20+k*(w+gap);const on=k<i;const col=on?COL[S[k].col]:COL.mut;
+  box(fc,x,y,w,80,col,on?"33":"11");fc.fillStyle=on?"#e6edf3":"#5b6675";fc.font="13px sans-serif";fc.textAlign="center";
+  fc.fillText(S[k].t,x+w/2,y+30);fc.font="11px sans-serif";fc.fillStyle="#8b949e";wrap(fc,S[k].m,x+8,y+50,w-16,14);
+  if(k<S.length-1){fc.strokeStyle=on?col:COL.mut;fc.beginPath();fc.moveTo(x+w,y+40);fc.lineTo(x+w+gap,y+40);fc.stroke();}}
+ fc.textAlign="left";fc.fillStyle="#8b949e";fc.font="12px sans-serif";fc.fillText("无状态 runner：状态全在 messages，所以这条流随便加机器并发",24,210);
+}
+function billD(){bc.clearRect(0,0,1040,120);let paid=0,saved=0;for(let k=0;k<i;k++){if(S[k].c)paid++;if(S[k].p=="hit")saved++;}
+ bc.fillStyle="#e6edf3";bc.font="15px monospace";bc.fillText("真调用 "+paid+" 次  ¥"+paid,30,40);
+ bc.fillStyle="#3fb950";bc.fillText("缓存省 "+saved+" 次  -¥"+saved,30,72);
+ bc.fillStyle="#8b949e";bc.font="12px sans-serif";bc.fillText("3 次提问若全真调=¥3，缓存命中后只付 ¥"+paid,30,100);}
+function wrap(c,t,x,y,w,lh){let ln="",yy=y;for(const ch of t){if(c.measureText(ln+ch).width>w){c.fillText(ln,x,yy);ln=ch;yy+=lh;}else ln+=ch;}c.fillText(ln,x,yy);}
+function stat(){document.getElementById("stat").textContent=i>=S.length?`第 ${i} 步 / 完成 ✅ 缓存省 1 次`:`第 ${i} 步 / ${i?S[i-1].t:"等待开始"}`;}
+function draw(){flowD();billD();stat();}
+document.getElementById("step").onclick=()=>{if(i<S.length)i++;draw();};
+document.getElementById("reset").onclick=()=>{i=0;draw();};
+draw();
+</script>
+</body>
+</html>

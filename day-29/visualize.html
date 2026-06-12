@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 29 · 原问题检索 vs HyDE 检索</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--hyde:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--hyde);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 29 · 原问题检索 vs HyDE 检索</h1>
+  <div class="sub">同一个口语短问题，左边直接查、右边先编假设答案再查——看相似度与命中谁更好</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 选一个问题 <small>口语短问句和库里的陈述句"形态"差很远</small></h2>
+    <div class="row">
+      <div class="chips" id="qChips">
+        <span class="chip on" data-q="0">HNSW 干嘛的？</span>
+        <span class="chip" data-q="1">嵌入向量怎么比相似？</span>
+        <span class="chip" data-q="2">RAG 咋治幻觉？</span>
+      </div>
+      <button id="run">▶ 对比检索</button>
+      <button id="reset" class="ghost">重置</button>
+      <span>命中相似度差 <span class="stat" id="delta">—</span></span>
+    </div>
+    <p class="note">直接检索：原问题→向量→查库。HyDE：先编假设答案（陈述句）→向量→查库；答案与文档同形态，更近。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 两条检索路并排 <small>条越长越相似；蓝=直接命中 紫=HyDE命中</small></h2>
+    <canvas id="bars" height="320"></canvas>
+    <p class="note">左列原问题直接查，右列把 LLM 编的假设答案当查询。HyDE 那列相似度普遍更长、命中更对题。</p>
+  </div>
+</div>
+<script>
+// ---------- 数据：3 个问题，各自的假设答案 + 6 个文档对两条路的相似度 ----------
+const DOCS=["向量库ANN索引(HNSW/IVF)","HNSW=跳表图索引","RAG拼文档减幻觉","嵌入=语义向量,余弦比","限流令牌桶/漏桶","分库分表跨库JOIN难"];
+const CASES=[
+  {q:"HNSW 干嘛的？", fake:"HNSW 是高效近似最近邻搜索算法。",
+   direct:[.46,.69,.21,.33,.10,.18], hyde:[.79,.67,.24,.36,.12,.20]},
+  {q:"嵌入向量怎么比相似？", fake:"嵌入向量用余弦相似度计算来比相似。",
+   direct:[.30,.27,.25,.68,.14,.22], hyde:[.34,.31,.27,.78,.16,.24]},
+  {q:"RAG 咋治幻觉？", fake:"RAG 检索文档拼进 prompt 减少幻觉。",
+   direct:[.28,.30,.66,.31,.20,.24], hyde:[.32,.34,.71,.33,.22,.26]},
+];
+let qi=0,prog=0,running=false;
+const bc=document.getElementById('bars');
+function clr(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+
+function bestI(a){let m=0;for(let i=1;i<a.length;i++)if(a[i]>a[m])m=i;return m}
+function drawBars(){const x=clr(bc),W=bc.clientWidth,H=bc.clientHeight,c=CASES[qi];
+  const colW=W/2,bx=14,bw=colW-130,bh=18,gap=18,top=64;
+  const di=bestI(c.direct),hi=bestI(c.hyde);
+  x.font='13px sans-serif';x.textAlign='left';
+  x.fillStyle='#58a6ff';x.fillText('直接检索：'+c.q,bx,28);
+  x.fillStyle='#bc8cff';x.fillText('HyDE：'+c.fake,colW+bx,28);
+  [[c.direct,di,'#58a6ff',0],[c.hyde,hi,'#bc8cff',colW]].forEach(([arr,best,col,ox])=>{
+    DOCS.forEach((d,i)=>{const y=top+i*(bh+gap);const v=arr[i]*prog;
+      x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText(d,ox+bx,y-3);
+      x.fillStyle='#0b0f15';x.fillRect(ox+bx,y,bw,bh);
+      x.fillStyle=i===best?col:'#30363d';x.fillRect(ox+bx,y,bw*v,bh);
+      x.fillStyle=i===best?col:'#8b949e';x.font='11px monospace';x.textAlign='right';
+      x.fillText(v.toFixed(2),ox+bx+bw+34,y+13);x.textAlign='left';
+      if(i===best&&prog>.9){x.fillStyle=col;x.fillText('★',ox+bx+bw+40,y+13)}})});
+  document.getElementById('delta').textContent=prog>.9?('+'+(c.hyde[hi]-c.direct[di]).toFixed(2)):'—';}
+
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function run(){if(running)return;running=true;prog=0;
+  for(let s=0;s<=20;s++){prog=s/20;drawBars();await sleep(28)}running=false}
+document.getElementById('qChips').onclick=e=>{if(!e.target.dataset.q)return;qi=+e.target.dataset.q;
+  document.querySelectorAll('#qChips .chip').forEach(c=>c.classList.toggle('on',+c.dataset.q===qi));prog=1;drawBars()};
+document.getElementById('run').onclick=run;
+document.getElementById('reset').onclick=()=>{prog=0;drawBars()};
+prog=1;drawBars();window.onresize=drawBars;
+</script>
+</body>
+</html>

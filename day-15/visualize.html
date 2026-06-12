@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 15 · 结构化输出可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#f85149}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  textarea{width:100%;height:84px;background:#0b0f15;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px;font:13px/1.5 ui-monospace,Menlo,monospace;resize:vertical}
+  pre{background:#0b0f15;border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0 0;font:13px/1.5 ui-monospace,Menlo,monospace;overflow:auto;color:var(--ok)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 15 · 自由文本 → 结构化 JSON</h1>
+  <div class="sub">三道闸门：抽取 → schema 约束 → 校验，灯随你的输入实时变绿/变红</div>
+</header>
+<div class="wrap">
+
+  <div class="card full">
+    <h2>① 三道闸门 <small>脏文本流过管线，命中红灯就被拦</small></h2>
+    <canvas id="pipe" height="170"></canvas>
+    <div class="chips" id="ex">
+      <span class="chip on" data-i="0">干净 JSON</span>
+      <span class="chip" data-i="1">带 markdown 围栏+废话</span>
+      <span class="chip" data-i="2">尾逗号</span>
+      <span class="chip" data-i="3">age 超界+plan 非法</span>
+      <span class="chip" data-i="4">缺 age 字段</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>② 模型的脏输出 <small>改它，看右侧校验变化</small></h2>
+    <textarea id="in"></textarea>
+    <div class="row"><button id="run">▶ 跑管线</button>
+      <span>plan 允许：<span class="warn">free/pro/enterprise</span> · age 0~150</span></div>
+    <p class="note">尾逗号会被修，缺字段/越界/枚举非法会被红灯拦。</p>
+  </div>
+
+  <div class="card">
+    <h2>③ schema 校验结果 <small>required/type/enum/range</small></h2>
+    <pre id="out">—</pre>
+  </div>
+</div>
+<script>
+const EX=[
+ '{"name":"Alice","age":30,"plan":"pro","tags":["api","sdk"]}',
+ '当然可以！```json\n{"name":"Bob","age":25,"plan":"free","tags":["web"]}\n``` 还要别的吗',
+ 'Sure: {"name":"Carol","age":40,"plan":"enterprise","tags":["ops",]}',
+ '好的 -> {"name":"Dave","age":151,"plan":"gold","tags":["x"]}',
+ '{"name":"Eve","plan":"pro","tags":["data"]}'];
+const SCHEMA={req:["name","age","plan","tags"],age:[0,150],plan:["free","pro","enterprise"]};
+const $=id=>document.getElementById(id);
+
+function extract(t){const m=t.match(/\{[\s\S]*\}/);if(!m)return null;const b=m[0].replace(/,\s*([}\]])/g,"$1");try{return JSON.parse(b)}catch(e){return null}}
+function validate(o){const e=[];if(!o)return["抽取失败"];for(const k of SCHEMA.req)if(!(k in o))e.push("缺字段 "+k);if("age"in o&&(o.age<SCHEMA.age[0]||o.age>SCHEMA.age[1]))e.push("age="+o.age+" 越界");if("plan"in o&&!SCHEMA.plan.includes(o.plan))e.push("plan='"+o.plan+"' 非法");return e}
+
+const pc=$("pipe");function gates(errs){const x=pc.getContext("2d"),w=pc.clientWidth,h=pc.clientHeight;pc.width=w*2;pc.height=h*2;x.scale(2,2);x.clearRect(0,0,w,h);
+  const ext=errs[0]!=="抽取失败",val=errs.length===0,labels=["抽取 extract","schema 约束","校验 validate"],st=[ext,true,val],cx=w/2;
+  x.strokeStyle="#283143";x.lineWidth=2;x.beginPath();x.moveTo(40,h/2);x.lineTo(w-40,h/2);x.stroke();
+  labels.forEach((L,i)=>{const px=40+(i+0.5)*((w-80)/3),ok=st[i];x.fillStyle=ok?"#3fb950":"#f85149";x.beginPath();x.arc(px,h/2,26,0,7);x.fill();
+    x.fillStyle="#0b0f15";x.font="bold 22px sans-serif";x.textAlign="center";x.fillText(ok?"✓":"✕",px,h/2+8);
+    x.fillStyle="#8b949e";x.font="13px sans-serif";x.fillText(L,px,h/2+50)});
+  x.fillStyle=val?"#3fb950":"#f0883e";x.font="13px sans-serif";x.fillText(val?"→ 入库":"→ 重试",w-40,h/2-18)}
+
+function run(){const o=extract($("in").value),errs=validate(o);gates(errs);
+  $("out").className=errs.length?"bad":"ok";
+  $("out").textContent=errs.length?"✕ 拦截\n"+errs.join("\n"):"✓ 通过\n"+JSON.stringify(o,null,2)}
+$("ex").onclick=e=>{if(!e.target.dataset.i)return;document.querySelectorAll("#ex .chip").forEach(c=>c.classList.toggle("on",c===e.target));$("in").value=EX[e.target.dataset.i];run()};
+$("run").onclick=run;$("in").oninput=run;$("in").value=EX[0];run();window.onresize=run;
+</script>
+</body>
+</html>

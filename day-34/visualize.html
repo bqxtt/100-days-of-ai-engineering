@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 34 · RAG生产化：缓存命中 / 增量更新</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#f85149}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  button.bad{background:var(--bad);color:#fff}
+  label{color:var(--mut);font-size:13px}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 34 · RAG 生产化</h1>
+  <div class="sub">缓存命中率 → 增量 add/delete 不重建，全是后端最熟的活</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 缓存命中率 <small>重复/相近请求走缓存，省调用</small></h2>
+    <canvas id="cache" height="220"></canvas>
+    <div class="row">
+      <button id="creal">▶ 新问题(miss)</button>
+      <button id="chit" class="ghost">▶ 相近问题(hit)</button>
+      <button id="creset" class="ghost">重置</button>
+      <span>命中率 <span class="stat" id="rate">0%</span></span>
+    </div>
+    <p class="note">绿=命中走缓存(微秒)，橙=miss真算嵌入(几十ms)。重复越多，命中率曲线越高。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 增量更新 <small>add插一块/delete弹一块，全量则全闪</small></h2>
+    <canvas id="store" height="220"></canvas>
+    <div class="row">
+      <button id="add">＋ 新增</button>
+      <button id="del" class="bad">－ 删除</button>
+      <button id="rebuild" class="ghost">↻ 全量重建</button>
+      <span>向量数 <span class="stat" id="vn">6</span></span>
+    </div>
+    <p class="note">增量只动1块（绿/红闪）；点"全量重建"看所有块红闪一遍——这就是上线为何要增量。</p>
+  </div>
+</div>
+<script>
+function fit(c){c.width=c.clientWidth*2;c.height=c.clientHeight*2;const x=c.getContext('2d');x.scale(2,2);return x}
+
+// ---------- ① 缓存命中率 ----------
+const cc=document.getElementById('cache');let hits=0,reqs=0,hist=[0],pulses=[];
+function rate(){return reqs?hits/reqs:0}
+function fire(hit){reqs++;if(hit)hits++;pulses.push({t:performance.now(),hit});hist.push(rate());if(hist.length>40)hist.shift();document.getElementById('rate').textContent=Math.round(rate()*100)+'%'}
+document.getElementById('creal').onclick=()=>fire(false);
+document.getElementById('chit').onclick=()=>fire(reqs>0);   // 没历史则首问必miss
+document.getElementById('creset').onclick=()=>{hits=reqs=0;hist=[0];pulses=[];document.getElementById('rate').textContent='0%'};
+function drawCache(){const x=fit(cc),w=cc.clientWidth,h=cc.clientHeight;x.clearRect(0,0,w,h);x.strokeStyle='#283143';x.strokeRect(0,0,w,h);
+  // 命中率曲线
+  x.strokeStyle='#3fb950';x.lineWidth=2;x.beginPath();hist.forEach((v,i)=>{const px=i/40*w,py=h-30-v*(h-50);i?x.lineTo(px,py):x.moveTo(px,py)});x.stroke();
+  x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText('命中率',8,16);x.fillText('reqs '+reqs,8,h-10);
+  const now=performance.now();pulses=pulses.filter(p=>now-p.t<600);pulses.forEach((p,i)=>{x.globalAlpha=1-(now-p.t)/600;x.fillStyle=p.hit?'#3fb950':'#f0883e';x.beginPath();x.arc(w-30,30+i*16,7,0,7);x.fill();x.globalAlpha=1});
+  requestAnimationFrame(drawCache)}
+
+// ---------- ② 增量更新 ----------
+const sc=document.getElementById('store');let blocks=[0,0,0,0,0,0];   // 0常驻 / >0闪烁帧
+function addB(){blocks.push(20)}
+function delB(){if(blocks.length)blocks.pop();}
+function rebuild(){blocks=blocks.map(()=>40)}   // 全部红闪=重算
+document.getElementById('add').onclick=addB;document.getElementById('del').onclick=delB;document.getElementById('rebuild').onclick=rebuild;
+function drawStore(){const x=fit(sc),w=sc.clientWidth,h=sc.clientHeight;x.clearRect(0,0,w,h);x.strokeStyle='#283143';x.strokeRect(0,0,w,h);
+  const per=8,bw=(w-24)/per,bh=26;blocks.forEach((f,i)=>{const r=Math.floor(i/per),c=i%per,bx=12+c*bw,by=20+r*(bh+8);
+    x.fillStyle=f>30?'#f85149':f>0?'#3fb950':'#1f6feb';x.fillRect(bx+2,by,bw-6,bh);if(blocks[i]>0)blocks[i]--});
+  document.getElementById('vn').textContent=blocks.length;x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText('蓝=常驻 绿=新增 红=重算',12,h-10);requestAnimationFrame(drawStore)}
+
+drawCache();drawStore();window.onresize=()=>{};
+</script>
+</body>
+</html>

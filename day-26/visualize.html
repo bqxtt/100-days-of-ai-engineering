@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 26 · Reranking 两阶段检索</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--noise:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 26 · 召回 → 重排，顺序怎么变</h1>
+  <div class="sub">左=向量召回(bi-encoder)的 top-N 顺序，右=rerank(cross-encoder)精排后的顺序</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>两阶段检索：连线看候选重新排队 <small>绿=正确文档，紫=注水(字面像/答非所问)，灰=无关</small></h2>
+    <canvas id="cv" height="380"></canvas>
+    <div class="row">
+      <button id="run">▶ 重排</button>
+      <button id="reset" class="ghost">重置</button>
+      <span>top-K 截断 = <span class="stat">3</span>　状态 <span class="stat" id="state">召回顺序</span></span>
+    </div>
+    <p class="note">召回求全(宽进)常把注水文档排进前列；重排求准(严出)把正确文档顶到前 K、注水沉底。top-K 线以下被丢弃。</p>
+  </div>
+</div>
+<script>
+// 候选：召回顺序(left rank) + 重排分(rerank) + 类型。type: ok=正确 noise=注水 none=无关
+const ITEMS=[
+  {t:"向量库百万检索·有损",     rec:0, rr:6, type:"none"},
+  {t:"重排了书架找菜谱(注水)",   rec:1, rr:1, type:"noise"},
+  {t:"加reranker精排top-K",     rec:2, rr:9, type:"ok"},
+  {t:"重排提第6到第1·性价比",    rec:3, rr:8, type:"ok"},
+  {t:"Cohere托管cross-encoder", rec:4, rr:5, type:"none"},
+];
+const TOPK=3, C={ok:'#3fb950',noise:'#bc8cff',none:'#8b949e'};
+let phase=0; // 0=召回顺序 1=重排后
+const cv=document.getElementById('cv');
+function dim(){cv.width=cv.clientWidth*2;cv.height=cv.clientHeight*2;const x=cv.getContext('2d');x.scale(2,2);return x}
+const lerp=(a,b,t)=>a+(b-a)*t;
+
+let anim=0;
+function ord(){return ITEMS.map(it=>({...it})).sort((a,b)=>a.rr-b.rr).map((it,i)=>{it.dst=i;return it});}
+function draw(t){const x=dim(),W=cv.clientWidth,H=cv.clientHeight,rh=58,lx=40,rx=W-300,bw=240;
+  x.clearRect(0,0,W,H);x.font='13px sans-serif';
+  const items=ord();
+  x.fillStyle='#8b949e';x.textAlign='left';x.fillText('① 召回 top-N',lx,18);x.fillText('② 重排后 top-K',rx,18);
+  items.forEach(it=>{
+    const y0=30+it.rec*rh, y1=30+it.dst*rh, y=lerp(y0,y1,t);
+    const cut=it.dst>=TOPK;
+    x.strokeStyle=C[it.type];x.globalAlpha=cut&&t>.5?0.25:0.55;x.lineWidth=2;
+    x.beginPath();x.moveTo(lx+bw,y0+18);x.bezierCurveTo(W/2,y0+18,W/2,y+18,rx,y+18);x.stroke();x.globalAlpha=1;
+    // 左卡(固定召回顺序)
+    x.fillStyle='#161b22';x.strokeStyle=C[it.type];x.lineWidth=1.5;
+    x.beginPath();x.roundRect?x.roundRect(lx,y0,bw,36,8):x.rect(lx,y0,bw,36);x.fill();x.stroke();
+    x.fillStyle=C[it.type];x.fillText((it.rec+1)+'. '+it.t,lx+8,y0+22);
+    // 右卡(动到重排位)
+    x.globalAlpha=cut&&t>.5?0.4:1;x.fillStyle='#161b22';x.strokeStyle=C[it.type];
+    x.beginPath();x.roundRect?x.roundRect(rx,y,bw,36,8):x.rect(rx,y,bw,36);x.fill();x.stroke();
+    x.fillStyle=C[it.type];x.fillText((it.dst+1)+'. '+it.t+'  ★'+it.rr,rx+8,y+22);x.globalAlpha=1;
+  });
+  const cy=30+TOPK*rh-4;x.strokeStyle='#f0883e';x.setLineDash([6,4]);x.beginPath();x.moveTo(rx-8,cy);x.lineTo(W-8,cy);x.stroke();x.setLineDash([]);
+  x.fillStyle='#f0883e';x.fillText('— top-K=3 截断（以下丢弃） —',rx,cy+16);
+}
+function run(){if(anim)return;phase=1;document.getElementById('state').textContent='重排中…';let t=0;
+  anim=setInterval(()=>{t+=0.04;draw(Math.min(t,1));if(t>=1){clearInterval(anim);anim=0;document.getElementById('state').textContent='重排完成 ✓'}},20);}
+function reset(){if(anim){clearInterval(anim);anim=0}phase=0;document.getElementById('state').textContent='召回顺序';draw(0);}
+document.getElementById('run').onclick=run;
+document.getElementById('reset').onclick=reset;
+draw(0);window.onresize=()=>draw(phase);
+</script>
+</body>
+</html>

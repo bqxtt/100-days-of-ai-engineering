@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 7 · Scaling Laws 可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--pink:#db61a2}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent);width:180px}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  .lvl{color:var(--warn)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 7 · Scaling Laws：loss 像物理定律一样可预测</h1>
+  <div class="sub">拖参数量 N / 数据量 D → 看 loss 怎么降；切对数坐标看幂律变直线；开 Chinchilla 看预算分配</div>
+</header>
+<div class="wrap">
+
+  <div class="card full">
+    <h2>① 幂律下降曲线 <small>loss ≈ L₀·N^-a，加数据是另一条幂律。拖滑块看当前点落在哪</small></h2>
+    <canvas id="curve" height="300"></canvas>
+    <div class="row">
+      <span class="chips" id="axisChips">
+        <span class="chip on" data-ax="log">log-log 坐标(看直线)</span>
+        <span class="chip" data-ax="lin">线性坐标(看递减)</span>
+      </span>
+      <button id="chin" class="ghost">Chinchilla 模式：关</button>
+    </div>
+    <div class="row">
+      <label>参数量 N <span class="lvl" id="nv">1.0B</span></label>
+      <input type="range" id="N" min="6" max="11" step="0.05" value="8">
+      <label>数据量 D <span class="lvl" id="dv">20B</span></label>
+      <input type="range" id="D" min="8" max="13" step="0.05" value="10.3">
+    </div>
+    <div class="row">
+      <span>当前 loss <span class="stat" id="loss">—</span></span>
+      <span>算力 C≈6ND <span class="stat" id="flop">—</span></span>
+      <span>D/N <span class="stat" id="ratio">—</span> token/参数 <span id="cmt" class="lvl"></span></span>
+    </div>
+    <p class="note">幂律：N 翻倍 loss 只降 5% 左右——边际递减但极平滑可外推。开 Chinchilla 模式后，固定算力下把预算挪给参数 vs 数据，红点是 20:1 最优区。</p>
+  </div>
+
+</div>
+<script>
+// Scaling law（数量级模仿 2001.08361，仅作直觉演示，非精确复现）
+const aN=0.076, aD=0.095, Nc=8.8e13, Dc=5.4e13, Lmin=1.7;
+const lN=N=>Math.pow(Nc/N,aN), lD=D=>Math.pow(Dc/D,aD);
+// 组合 loss：受 N、D 共同瓶颈，取两者主导 + 不可约下限
+const loss=(N,D)=>Lmin+Math.min(lN(N),lD(D))*1.0+0.18;
+let axis='log', chin=false;
+const $=id=>document.getElementById(id);
+const c=$('curve'),cx=c.getContext('2d');
+const fmt=v=>v>=1e12?(v/1e12).toFixed(1)+'T':v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(0)+'M':v.toFixed(0);
+const flop=v=>v>=1e21?(v/1e21).toFixed(1)+'e21':v>=1e18?(v/1e18).toFixed(1)+'e18':v.toExponential(1);
+
+function draw(){
+  const w=c.clientWidth,h=c.clientHeight,pad=46;c.width=w*2;c.height=h*2;cx.scale(2,2);
+  cx.clearRect(0,0,w,h);
+  const N=Math.pow(10,+$('N').value),D=Math.pow(10,+$('D').value);
+  // 坐标轴
+  cx.strokeStyle='#283143';cx.lineWidth=1;cx.beginPath();
+  cx.moveTo(pad,8);cx.lineTo(pad,h-pad);cx.lineTo(w-12,h-pad);cx.stroke();
+  cx.fillStyle='#8b949e';cx.font='11px sans-serif';
+  cx.fillText('loss',8,18);cx.fillText('参数量 N →',w-90,h-pad+22);
+  // 扫一条 loss(N) 幂律曲线，D 固定为当前
+  const n0=1e6,n1=1e11;const yv=N=>loss(N,D);
+  const ys=[];for(let i=0;i<=200;i++){const N=n0*Math.pow(n1/n0,i/200);ys.push(yv(N));}
+  const ymin=Lmin,ymax=Math.max(...ys);
+  const xT=v=>pad+(axis==='log'?(Math.log10(v)-6)/5:(v-n0)/(n1-n0))*(w-pad-16);
+  const yT=v=>8+(v-ymin)/(ymax-ymin)*(h-pad-8);
+  cx.strokeStyle='#58a6ff';cx.lineWidth=2.5;cx.beginPath();
+  for(let i=0;i<=200;i++){const N=n0*Math.pow(n1/n0,i/200);const px=xT(N),py=yT(ys[i]);i?cx.lineTo(px,py):cx.moveTo(px,py);}cx.stroke();
+  // 当前点
+  const px=xT(N),py=yT(loss(N,D));cx.fillStyle='#3fb950';cx.beginPath();cx.arc(px,py,6,0,7);cx.fill();
+  cx.strokeStyle='#3fb950';cx.setLineDash([3,3]);cx.beginPath();cx.moveTo(px,py);cx.lineTo(px,h-pad);cx.moveTo(pad,py);cx.lineTo(px,py);cx.stroke();cx.setLineDash([]);
+  // Chinchilla 最优带：D≈20N 的点
+  if(chin){const No=N,Do=20*N;const rx=xT(No),ry=yT(loss(No,Do));cx.fillStyle='#db61a2';cx.beginPath();cx.arc(rx,ry,5,0,7);cx.fill();cx.fillText('20:1 最优',rx+8,ry);}
+  cx.fillStyle='#8b949e';cx.fillText(axis==='log'?'log-log：幂律压成直线':'线性：明显边际递减',pad+8,20);
+  // 面板
+  const r=D/N;$('nv').textContent=fmt(N);$('dv').textContent=fmt(D);
+  $('loss').textContent=loss(N,D).toFixed(3);$('flop').textContent=flop(6*N*D);
+  $('ratio').textContent=r.toFixed(1);
+  $('cmt').textContent=r<10?'欠训(模型太大)':r>40?'过训(数据偏多)':'≈Chinchilla甜区';
+}
+$('axisChips').onclick=e=>{if(!e.target.dataset.ax)return;axis=e.target.dataset.ax;document.querySelectorAll('#axisChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.ax===axis));draw()};
+$('chin').onclick=e=>{chin=!chin;e.target.textContent='Chinchilla 模式：'+(chin?'开':'关');draw()};
+$('N').oninput=draw;$('D').oninput=draw;window.onresize=draw;draw();
+</script>
+</body>
+</html>

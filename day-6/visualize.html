@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 6 · Tokenizer Playground</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1000px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  textarea{width:100%;height:90px;background:#0b0f15;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:12px;font:15px/1.6 inherit;resize:vertical}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:12px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:700;font-size:22px}
+  .stat.warn{color:var(--warn)}
+  label{color:var(--mut);font-size:13px}
+  .big{display:flex;gap:28px;flex-wrap:wrap}
+  .big div small{display:block;color:var(--mut);font-size:12px;font-weight:400}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 6 · Tokenizer Playground</h1>
+  <div class="sub">输入文字 → 实时切 token、高亮、计数、估成本。亲手比一比中文为啥更费 token</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 输入 <small>改文字，下面实时切分</small></h2>
+    <textarea id="inp">Tokenization 把文字切成 token。模型只认识整数 ID，不认识字符串！中文一个字约等于 1-2 个 token，英文一个词常是 1 个。</textarea>
+    <div class="chips" id="presets">
+      <span class="chip on" data-i="0">默认混合</span>
+      <span class="chip" data-i="1">纯英文</span>
+      <span class="chip" data-i="2">纯中文</span>
+      <span class="chip" data-i="3">代码片段</span>
+    </div>
+    <p class="note">本页是 byte-level BPE 的简化近似（仅演示直觉），真实 token 数以 tiktoken 为准。</p>
+  </div>
+
+  <div class="card">
+    <h2>② Token 高亮 <small>每个色块=1 个 token</small></h2>
+    <canvas id="cv" height="220"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>③ 计数与计费 <small>按 GPT-4o 输入价 $2.5 / 1M tokens 估算</small></h2>
+    <div class="big">
+      <div><span class="stat" id="chars">0</span><small>字符数 chars</small></div>
+      <div><span class="stat" id="toks">0</span><small>token 数</small></div>
+      <div><span class="stat warn" id="ratio">—</span><small>字符/token 比</small></div>
+      <div><span class="stat" id="cost">$0</span><small>本段输入成本</small></div>
+    </div>
+    <p class="note">中文比≈1-2，英文比≈4。比值越小=越费 token。切纯中文 vs 纯英文对比一下。</p>
+  </div>
+</div>
+<script>
+const PRESETS=[
+ "Tokenization 把文字切成 token。模型只认识整数 ID，不认识字符串！中文一个字约等于 1-2 个 token，英文一个词常是 1 个。",
+ "Tokenization splits text into tokens. The model only sees integer IDs, never raw strings. Byte-level BPE never goes out of vocabulary.",
+ "分词器是文字和整数之间的序列化协议。一个汉字三字节，常被切成一到两个 token，所以同样意思中文更费钱，上下文窗口也更紧。",
+ "def encode(s):\n    return tok.encode(s)  # cost = len(ids)*price"];
+const PRICE=2.5/1e6;
+// 简化 byte-level BPE 近似：英文按 ~4 字符/token，中文每字 ~1.5 token，标点/符号独立
+const PAL=['#1f6feb','#3fb950','#f0883e','#a371f7','#db61a2','#39c5cf','#e3b341','#ff7b72'];
+function tokenize(t){
+  const out=[];let i=0;
+  while(i<t.length){
+    const c=t[i];
+    if(/[一-鿿]/.test(c)){ // CJK：每字单独，偶尔两字成块
+      if(i+1<t.length&&/[一-鿿]/.test(t[i+1])&&out.length%2){out.push(c+t[i+1]);i+=2;}else{out.push(c);i++;}
+    }else if(/[A-Za-z0-9]/.test(c)){ // 单词块 -> 每 ~4 字符切一段
+      let j=i;while(j<t.length&&/[A-Za-z0-9]/.test(t[j]))j++;const w=t.slice(i,j);
+      for(let k=0;k<w.length;k+=4)out.push(w.slice(k,k+4));i=j;
+    }else{out.push(c);i++;}
+  }
+  return out;
+}
+const cv=document.getElementById('cv'),x=cv.getContext('2d');
+function render(){
+  const t=document.getElementById('inp').value;const toks=tokenize(t);
+  document.getElementById('chars').textContent=t.length;
+  document.getElementById('toks').textContent=toks.length;
+  document.getElementById('ratio').textContent=toks.length?(t.length/toks.length).toFixed(2):'—';
+  document.getElementById('cost').textContent='$'+(toks.length*PRICE).toFixed(6);
+  // canvas
+  const w=cv.clientWidth,h=220;cv.width=w*2;cv.height=h*2;x.scale(2,2);x.clearRect(0,0,w,h);
+  x.font='14px ui-monospace,Menlo,monospace';x.textBaseline='middle';
+  let px=10,py=20;
+  toks.forEach((tk,i)=>{const lbl=tk.replace(/\n/g,'\\n');const tw=Math.max(18,x.measureText(lbl).width+12);
+    if(px+tw>w-10){px=10;py+=30;}if(py>h-8)return;
+    x.fillStyle=PAL[i%PAL.length];x.globalAlpha=.28;roundRect(px,py-12,tw,24,5);x.fill();
+    x.globalAlpha=1;x.strokeStyle=PAL[i%PAL.length];x.lineWidth=1;roundRect(px,py-12,tw,24,5);x.stroke();
+    x.fillStyle='#e6edf3';x.fillText(lbl,px+6,py);px+=tw+5;});
+}
+function roundRect(a,b,w,h,r){x.beginPath();x.moveTo(a+r,b);x.arcTo(a+w,b,a+w,b+h,r);x.arcTo(a+w,b+h,a,b+h,r);x.arcTo(a,b+h,a,b,r);x.arcTo(a,b,a+w,b,r);x.closePath();}
+document.getElementById('inp').addEventListener('input',render);
+document.getElementById('presets').onclick=e=>{if(!e.target.dataset.i)return;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.toggle('on',c===e.target));document.getElementById('inp').value=PRESETS[+e.target.dataset.i];render();};
+window.onresize=render;render();
+</script>
+</body>
+</html>

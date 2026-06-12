@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 25 · 检索策略：向量 / BM25 / Hybrid</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--kw:#f0883e;--hy:#bc8cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--mut);font-size:13px}
+  .chip.on{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  .leg{display:inline-flex;align-items:center;gap:6px;color:var(--mut);font-size:13px;margin-right:14px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 25 · 向量 vs BM25 vs Hybrid 三路召回</h1>
+  <div class="sub">同一查询，三列排序并排：向量懂语义 · BM25 抓精确词 · RRF 融合取长补短</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>选一个查询 <small>看三种检索分别把哪些文档排前面，连线=融合后名次怎么变</small></h2>
+    <div class="row">
+      <div class="chips" id="qChips">
+        <span class="chip on" data-q="0">宠物动物（无精确词，考语义）</span>
+        <span class="chip" data-q="1">BM25 算法（专有缩写）</span>
+        <span class="chip" data-q="2">检索增强生成（语义+关键词）</span>
+      </div>
+    </div>
+    <div class="row">
+      <span class="leg"><i class="dot" style="background:#3fb950"></i>向量 dense</span>
+      <span class="leg"><i class="dot" style="background:#f0883e"></i>BM25 关键词</span>
+      <span class="leg"><i class="dot" style="background:#bc8cff"></i>Hybrid RRF</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>① 三路排序对比 <small>每列从上到下=top1→top4；灰线=同一文档在两列间的名次连线</small></h2>
+    <canvas id="rank" height="340"></canvas>
+    <p class="note">向量把语义近的拉前；BM25 只让含关键词的冒头（其余并列垫底）；Hybrid 按 1/(60+名次) 融合两列名次。</p>
+  </div>
+
+</div>
+<script>
+// 8 篇文档（与 practice.py 同步）
+const DOCS=["猫·家养宠物·抓老鼠","狗·人类伙伴·看家","RAG 检索增强生成","向量库 cosine 近邻","BM25 关键词算法","Python 后端脚本","混合检索 RRF 融合","番茄炒蛋家常菜"];
+// 每个查询：vec/bm25 给出 top4 的文档下标（mock，模拟 practice.py 量级）
+const Q=[
+ {vec:[0,7,2,1], bm25:[0,1,2,3]},   // 宠物动物：向量召回猫，BM25仅0命中
+ {vec:[2,7,3,0], bm25:[4,0,1,2]},   // BM25：向量漏第4，BM25命中
+ {vec:[2,6,3,1], bm25:[2,6,0,1]},   // 检索增强生成：两路都对得上
+];
+function rrf(a,b,k=60){const pa={},pb={};a.forEach((d,i)=>pa[d]=i+1);b.forEach((d,i)=>pb[d]=i+1);
+ const ids=[...new Set([...a,...b])]; return ids.map(d=>[d,1/(k+(pa[d]||99))+1/(k+(pb[d]||99))]).sort((x,y)=>y[1]-x[1]).map(x=>x[0]).slice(0,4);}
+let q=0;
+const cv=document.getElementById('rank');
+function clr(c){const x=c.getContext('2d');c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x;}
+function draw(){const x=clr(cv),w=cv.clientWidth,h=cv.clientHeight;
+ const vec=Q[q].vec,bm=Q[q].bm25,hy=rrf(vec,bm);
+ const cols=[{t:"向量",a:vec,c:"#3fb950",cx:w*0.18},{t:"BM25",a:bm,c:"#f0883e",cx:w*0.5},{t:"Hybrid",a:hy,c:"#bc8cff",cx:w*0.82}];
+ const top=58,rh=62,bw=Math.min(220,w*0.26);
+ // 连线：向量↔BM25 同文档；BM25↔Hybrid 同文档
+ x.lineWidth=1.5;
+ [[vec,bm,w*0.18,w*0.5],[bm,hy,w*0.5,w*0.82]].forEach(([A,B,xa,xb])=>{
+   A.forEach((d,i)=>{const j=B.indexOf(d);if(j<0)return;x.strokeStyle="rgba(139,148,158,.35)";
+     x.beginPath();x.moveTo(xa+bw/2,top+i*rh+18);x.lineTo(xb-bw/2,top+j*rh+18);x.stroke();});});
+ cols.forEach(col=>{x.fillStyle=col.c;x.font="600 15px sans-serif";x.textAlign="center";x.fillText(col.t,col.cx,30);
+   col.a.forEach((d,i)=>{const y=top+i*rh;x.fillStyle="#161b22";x.strokeStyle=col.c;x.lineWidth=2;
+     x.beginPath();(x.roundRect?x.roundRect(col.cx-bw/2,y,bw,40,9):x.rect(col.cx-bw/2,y,bw,40));x.fill();x.stroke();
+     x.fillStyle=col.c;x.font="11px monospace";x.textAlign="left";x.fillText("#"+(i+1),col.cx-bw/2+8,y+15);
+     x.fillStyle="#e6edf3";x.font="11px sans-serif";x.fillText(DOCS[d].slice(0,11),col.cx-bw/2+8,y+30);});});}
+document.getElementById('qChips').onclick=e=>{if(!e.target.dataset.q)return;q=+e.target.dataset.q;
+ document.querySelectorAll('#qChips .chip').forEach(c=>c.classList.toggle('on',+c.dataset.q===q));draw();};
+draw();window.onresize=draw;
+</script>
+</body>
+</html>

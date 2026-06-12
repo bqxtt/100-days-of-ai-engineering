@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 8 · KV Cache 推理可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#f85149}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  .bad{color:var(--bad)}
+  .lvl{color:var(--warn)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 8 · KV Cache 怎么把 n² 砍成 n</h1>
+  <div class="sub">缓存随生成增长 → 每步计算量对比 → 累计省下的算力 → batch 烧多少显存</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① KV Cache 增长 <small>每生成1个token，K/V各追加一格</small></h2>
+    <canvas id="cache" height="220"></canvas>
+    <p class="note">蓝=已缓存的历史K/V（不重算），绿=新token。重算版每步要把蓝格全部重算。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 每步计算量 <small>橙=无缓存重算 绿=有缓存</small></h2>
+    <canvas id="step" height="220"></canvas>
+    <p class="note">无缓存每步随序列变高(∝n)，全程累加成n²；缓存版几乎水平=线性。</p>
+  </div>
+
+  <div class="card full">
+    <h2>③ 累计计算量 + batch 显存 <small>左:省了多少算力 右:KV Cache占显存</small></h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <canvas id="total" height="220"></canvas>
+      <canvas id="mem" height="220"></canvas>
+    </div>
+    <div class="row">
+      <button id="run">▶ 生成</button>
+      <button id="reset" class="ghost">重置</button>
+      <label>token <span class="stat" id="t">0</span>/64</label>
+      <label>已省 <span class="stat" id="save">0%</span></label>
+      <label>batch <span class="lvl" id="bv">8</span></label>
+      <input type="range" id="b" min="1" max="64" step="1" value="8" style="width:160px">
+      <label>显存 <span class="bad" id="gb">—</span></label>
+    </div>
+    <p class="note">batch 越大吞吐越高，但 KV Cache 显存线性涨——对应思考题3。</p>
+  </div>
+</div>
+<script>
+const N=64,D=32,L=24;            // 64token, 维度32, 24层(算显存用)
+let n=0,running=false,cumN=0,cumC=0,seriesN=[],seriesC=[];
+const cv={cache:'cache',step:'step',total:'total',mem:'mem'};
+const ctx=k=>document.getElementById(cv[k]).getContext('2d');
+function clear(id){const c=document.getElementById(id);c.width=c.clientWidth*2;c.height=c.clientHeight*2;const x=c.getContext('2d');x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return[x,c.clientWidth,c.clientHeight]}
+
+function drawCache(){const[x,w,h]=clear('cache');const cols=Math.min(n,32),cw=w/34;
+  for(let i=0;i<cols;i++){x.fillStyle=i===cols-1?'#3fb950':'#1f6feb';x.fillRect(8+i*cw,h/2-50,cw-2,40);x.fillStyle=i===cols-1?'#3fb950':'#2b6cb0';x.fillRect(8+i*cw,h/2+6,cw-2,40)}
+  x.fillStyle='#8b949e';x.font='12px sans-serif';x.fillText('K cache: '+n,8,h/2-58);x.fillText('V cache: '+n,8,h/2+62);
+  x.fillStyle=n>=N?'#3fb950':'#58a6ff';x.fillText(n>=N?'生成完毕：缓存 64 格':'缓存随生成不断 append',8,h-10)}
+
+function drawStep(){const[x,w,h]=clear('step');x.strokeStyle='#283143';x.strokeRect(0,0,w,h);const bw=w/N;
+  for(let i=0;i<n;i++){x.fillStyle='#f0883e';x.fillRect(i*bw,h-(i+1)/N*h*0.9,bw*.45,(i+1)/N*h*0.9);x.fillStyle='#3fb950';x.fillRect(i*bw+bw*.5,h-6,bw*.45,6)}
+  x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText('橙=重算∝n  绿=缓存=常数',6,14)}
+
+function drawTotal(){const[x,w,h]=clear('total');x.strokeStyle='#283143';x.strokeRect(0,0,w,h);const mx=N*N/2;
+  const plot=(arr,col)=>{x.strokeStyle=col;x.lineWidth=2.5;x.beginPath();arr.forEach((v,i)=>{const px=i/N*w,py=h-Math.min(h,v/mx*h);i?x.lineTo(px,py):x.moveTo(px,py)});x.stroke()};
+  plot(seriesN,'#f0883e');plot(seriesC,'#3fb950');x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText('累计算力 橙=无缓存(n²) 绿=有缓存(n)',6,14)}
+
+function drawMem(){const[x,w,h]=clear('mem');const b=+document.getElementById('b').value;const bytes=2*L*n*D*b*2;const max=2*L*N*D*64*2;
+  const bh=Math.min(h-30,bytes/max*(h-30));x.fillStyle='#f85149';x.fillRect(w/2-40,h-20-bh,80,bh);x.fillStyle='#8b949e';x.font='12px sans-serif';
+  const mb=(bytes/1e6).toFixed(1);document.getElementById('gb').textContent=mb+' MB';x.fillText('KV Cache ≈ '+mb+' MB',w/2-50,h-4);x.fillText('batch×len 线性涨',w/2-50,16)}
+
+function tick(){if(n>=N)return false;n++;cumN+=n;cumC+=1;seriesN.push(cumN);seriesC.push(cumC);
+  document.getElementById('t').textContent=n;document.getElementById('save').textContent=((1-cumC/cumN)*100).toFixed(0)+'%';
+  drawCache();drawStep();drawTotal();drawMem();return true}
+function loop(){if(running&&tick())requestAnimationFrame(loop);else{running=false;document.getElementById('run').textContent='▶ 生成'}}
+function reset(){n=0;cumN=0;cumC=0;seriesN=[];seriesC=[];running=false;document.getElementById('run').textContent='▶ 生成';document.getElementById('t').textContent=0;document.getElementById('save').textContent='0%';drawCache();drawStep();drawTotal();drawMem()}
+document.getElementById('run').onclick=e=>{if(n>=N)reset();running=!running;e.target.textContent=running?'⏸ 暂停':'▶ 生成';if(running)loop()};
+document.getElementById('reset').onclick=reset;
+const b=document.getElementById('b');b.oninput=()=>{document.getElementById('bv').textContent=b.value;drawMem()};
+reset();window.onresize=()=>{drawCache();drawStep();drawTotal();drawMem()};
+</script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"><title>Day 40 — Tool 设计：差工具 vs 好工具</title>
+<style>html,body{margin:0;background:#0e1117;color:#c9d1d9;font:14px system-ui,sans-serif;text-align:center}
+canvas{display:block;margin:0 auto}</style></head>
+<body><canvas id="c" width="900" height="560"></canvas>
+<script>
+const x=document.getElementById('c').getContext('2d');
+function box(bx,by,w,h,col,t1,t2){x.fillStyle=col;x.fillRect(bx,by,w,h);x.strokeStyle='#30363d';x.strokeRect(bx,by,w,h);
+ x.fillStyle='#e6edf3';x.font='bold 14px sans-serif';x.fillText(t1,bx+10,by+22);x.font='12px sans-serif';x.fillStyle='#8b949e';if(t2)x.fillText(t2,bx+10,by+42);}
+function arrow(x1,y1,x2,y2,col){x.strokeStyle=col;x.lineWidth=2;x.beginPath();x.moveTo(x1,y1);x.lineTo(x2,y2);x.stroke();
+ const a=Math.atan2(y2-y1,x2-x1);x.beginPath();x.moveTo(x2,y2);x.lineTo(x2-9*Math.cos(a-0.4),y2-9*Math.sin(a-0.4));x.lineTo(x2-9*Math.cos(a+0.4),y2-9*Math.sin(a+0.4));x.closePath();x.fillStyle=col;x.fill();}
+function title(t,y){x.fillStyle='#e6edf3';x.font='bold 17px sans-serif';x.textAlign='center';x.fillText(t,450,y);x.textAlign='left';}
+x.fillStyle='#0e1117';x.fillRect(0,0,900,560);
+title('Tool 设计 = 给 LLM 用的 REST API',30);
+box(360,55,180,40,'#1f6feb','LLM Agent','收到任务');
+// 差
+title('差工具',135);
+box(60,160,180,52,'#3d1d1d','do_stuff','模糊desc · 无schema');arrow(450,95,150,160,'#8b949e');
+box(60,250,180,52,'#5a2d2d','模型乱编参数','order_id="1024"❌');arrow(150,212,150,250,'#f85149');
+box(60,340,180,52,'#5a2d2d','校验失败','❌ 调用错');arrow(150,302,150,340,'#f85149');
+// 好
+title('好工具',135);
+box(660,160,180,52,'#15321b','transfer_order','清晰desc+示例+enum');arrow(450,95,750,160,'#8b949e');
+box(660,250,180,52,'#1c4023','严格schema约束','order_id:int·from/to:enum');arrow(750,212,750,250,'#2ea043');
+box(660,340,180,52,'#1c4023','一次调对 ✓','error回报可自纠');arrow(750,302,750,340,'#2ea043');
+// 六要素
+x.fillStyle='#161b22';x.fillRect(60,420,780,110);x.strokeStyle='#30363d';x.strokeRect(60,420,780,110);
+const its=['1 清晰name=路由','2 description=说明书','3 JSON Schema=参数契约','4 友好error=422+body','5 幂等=PUT/GET','6 粒度=单职责'];
+x.fillStyle='#58a6ff';x.font='13px sans-serif';its.forEach((t,i)=>x.fillText(t,80+(i%3)*260,452+Math.floor(i/3)*36));
+x.fillStyle='#8b949e';x.font='11px sans-serif';x.fillText('desc 和 schema 就是给模型的 prompt — qwen2.5:3b 真测：差工具失败，好工具成功',80,548);
+</script></body></html>

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 18 · Prompt 模板管理可视化</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#f85149}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{margin:0 0 12px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  .v{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--mut);white-space:pre-wrap}
+  .v b{color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 18 · Prompt 即代码：版本控制 → A/B → 评估</h1>
+  <div class="sub">两版 prompt 跑同一批用例 → 准确率柱状图对比 → 谁高谁上线，全在浏览器里</div>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h2>① 两版模板 <small>v2 加了约束/枚举，理应更准</small></h2>
+    <div class="v" id="tpl"></div>
+    <p class="note">prompt = 模板 + {{变量}}。入册带版本号 + 内容指纹（改一字哈希就变）。</p>
+  </div>
+
+  <div class="card">
+    <h2>② 版本历史 <small>像 git commit，可回滚</small></h2>
+    <canvas id="hist" height="200"></canvas>
+    <p class="note">时间线上每个点 = 一版，标注版本号与指纹。当前上线版高亮。</p>
+  </div>
+
+  <div class="card full">
+    <h2>③ A/B 评估 <small>同一批用例两版对跑，柱高=准确率，绿者胜出上线</small></h2>
+    <canvas id="ab" height="240"></canvas>
+    <div class="row">
+      <button id="run">▶ 跑 A/B 评估</button>
+      <button id="reset" class="ghost">重置</button>
+      <span>胜出 <span class="stat" id="win">—</span></span>
+      <span>用例数 <span class="stat" id="n">4</span></span>
+    </div>
+    <p class="note">v1 笼统、v2 带约束 → v2 命中更多 → 柱更高变绿 → 应灰度上线 v2，v1 进回滚池。</p>
+  </div>
+</div>
+<script>
+// 4 个用例：[输入, 期望类别]
+const CASES=[["我要退款","退款"],["快递三天没动","物流"],["态度太差了","投诉"],["发票怎么开","其他"]];
+const TABLE={"退":"退款","快递":"物流","态度":"投诉","发票":"其他"};
+// 两版模板：v1 笼统、v2 带约束枚举
+const V=[{ver:1,fp:"3b818efa",body:"把工单分类：{{text}}。直接给类别。"},
+         {ver:2,fp:"ea159c14",body:"仅从[退款,物流,投诉,其他]里选一个，只输出类别名。\n工单：{{text}}"}];
+function mock(body,text){const strict=body.indexOf("仅")>=0||body.indexOf("只输出")>=0;
+  for(const k in TABLE){if(text.indexOf(k)>=0)return strict?TABLE[k]:(k==="发票"?"其他":TABLE[k][0]+"?")}return"其他"}
+function acc(body){let hit=0;for(const[t,w]of CASES)hit+=mock(body,t)===w;return hit/CASES.length}
+
+document.getElementById("tpl").innerHTML=V.map(v=>`<b>v${v.ver}</b> (${v.fp})  ${v.body.replace(/\n/g," ⏎ ")}`).join("\n\n");
+
+const hc=document.getElementById("hist"),ac=document.getElementById("ab");
+function clr(c){const x=c.getContext("2d");c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight);return x}
+function drawHist(cur){const x=clr(hc),w=hc.clientWidth,h=hc.clientHeight,y=h/2;
+  x.strokeStyle="#283143";x.lineWidth=2;x.beginPath();x.moveTo(40,y);x.lineTo(w-40,y);x.stroke();
+  V.forEach((v,i)=>{const px=40+i*(w-80);const on=v.ver===cur;x.fillStyle=on?"#3fb950":"#1f6feb";x.beginPath();x.arc(px,y,on?12:9,0,7);x.fill();
+    x.fillStyle="#e6edf3";x.font="13px sans-serif";x.fillText("v"+v.ver,px-7,y-22);x.fillStyle="#8b949e";x.font="11px monospace";x.fillText(v.fp,px-22,y+30)})}
+let target=[0,0],cur=[0,0],winner=0;
+function drawAB(){const x=clr(ac),w=ac.clientWidth,h=ac.clientHeight,base=h-34,bw=90;
+  x.strokeStyle="#283143";x.beginPath();x.moveTo(40,base);x.lineTo(w-20,base);x.stroke();
+  V.forEach((v,i)=>{cur[i]+=(target[i]-cur[i])*0.12;const bh=cur[i]*(base-30),px=120+i*180;
+    const won=winner&&v.ver===winner;x.fillStyle=won?"#3fb950":"#1f6feb";x.fillRect(px,base-bh,bw,bh);
+    x.fillStyle="#e6edf3";x.font="13px sans-serif";x.fillText("v"+v.ver+" "+(cur[i]*100|0)+"%",px+14,base-bh-8);
+    x.fillStyle="#8b949e";x.font="11px sans-serif";x.fillText("acc",px+30,base+18)})
+  if(Math.abs(cur[0]-target[0])+Math.abs(cur[1]-target[1])>0.002)requestAnimationFrame(drawAB)}
+function reset(){target=[0,0];cur=[0,0];winner=0;drawHist(0);drawAB();document.getElementById("win").textContent="—"}
+document.getElementById("run").onclick=()=>{target=[acc(V[0].body),acc(V[1].body)];winner=target[1]>=target[0]?2:1;
+  document.getElementById("win").textContent="v"+winner;drawHist(winner);drawAB()};
+document.getElementById("reset").onclick=reset;
+reset();window.onresize=()=>{drawHist(winner||0);drawAB()};
+</script>
+</body>
+</html>

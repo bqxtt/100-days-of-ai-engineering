@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 27 · RAG 索引 Pipeline</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--pur:#a371f7}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:28px 24px 8px;text-align:center}
+  h1{margin:0;font-size:24px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{margin:0 0 6px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  label{color:var(--mut);font-size:13px}
+  input[type=range]{accent-color:var(--accent)}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+  p.note{color:var(--mut);font-size:13px;margin:10px 0 0}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--mut);font-size:12px;margin-top:8px}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 27 · RAG 索引 Pipeline（写库这一半）</h1>
+  <div class="sub">文档 → 分块 → nomic-embed-text 嵌入 → 向量库。点「索引」看每篇文档逐级流过，明天接问答侧</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>索引侧 indexing <small>离线写一次：把私有文档变成可被语义检索的向量库</small></h2>
+    <canvas id="pipe" height="430"></canvas>
+    <div class="row">
+      <button id="run">▶ 开始索引</button>
+      <button id="reset" class="ghost">重置</button>
+      <label>文档数 <span class="stat" id="ndocv">4</span></label>
+      <input type="range" id="ndoc" min="2" max="6" step="1" value="4" style="width:140px">
+      <span>已入库块 <span class="stat" id="cnt">0</span> / 维度 <span class="stat">768</span></span>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--accent)"></span>文档 doc</span>
+      <span><span class="dot" style="background:var(--warn)"></span>分块 chunk</span>
+      <span><span class="dot" style="background:var(--pur)"></span>嵌入向量 768d</span>
+      <span><span class="dot" style="background:var(--ok)"></span>向量库 numpy(N,768)</span>
+    </div>
+    <p class="note">铁律：建库与查询用同一个嵌入模型同一维度。右侧虚线框=明天 Day28 的问答侧入口（query→检索→拼prompt→大模型）。</p>
+  </div>
+</div>
+<script>
+const c=document.getElementById('pipe'),x=c.getContext('2d');
+let docs=4, packs=[], t=0, run=false, indexed=0;
+const COL={doc:'#58a6ff',chunk:'#f0883e',emb:'#a371f7',ok:'#3fb950',line:'#283143',mut:'#8b949e'};
+// 每篇文档切出的块数
+function build(){packs=[];indexed=0;t=0;const ch=[3,2,4,3,2,3];for(let i=0;i<docs;i++)for(let j=0;j<ch[i%6];j++)packs.push({d:i,j,prog:0});}
+function fit(){c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.setTransform(2,0,0,2,0,0);}
+const STX=[0.06,0.30,0.55,0.80]; // doc, chunk, embed, store x-center ratios
+function draw(){fit();const w=c.clientWidth,h=c.clientHeight;x.clearRect(0,0,w,h);
+  const X=STX.map(r=>r*w), lab=['加载/文档','分块 chunk','嵌入 embed','向量库 index'];
+  // 阶段标题与轴
+  x.font='13px sans-serif';x.fillStyle=COL.mut;x.textAlign='center';
+  lab.forEach((s,i)=>x.fillText(s, X[i], 22));
+  x.strokeStyle=COL.line;x.setLineDash([4,4]);for(let i=1;i<4;i++){x.beginPath();x.moveTo((X[i-1]+X[i])/2,30);x.lineTo((X[i-1]+X[i])/2,h-50);x.stroke();}x.setLineDash([]);
+  // 文档堆
+  for(let i=0;i<docs;i++){const y=60+i*((h-130)/docs);x.fillStyle=COL.doc;x.globalAlpha=.85;x.fillRect(X[0]-18,y,36,30);x.globalAlpha=1;x.fillStyle=COL.mut;x.fillText('doc'+i,X[0],y-3);}
+  // 向量库盒
+  x.strokeStyle=COL.ok;x.strokeRect(X[3]-44,55,88,h-180);x.fillStyle=COL.mut;x.fillText('numpy ('+indexed+',768)',X[3],h-110);
+  // 明天问答侧入口
+  x.setLineDash([5,5]);x.strokeStyle='#3a4a5a';x.strokeRect(X[3]-44,h-95,88,55);x.setLineDash([]);x.fillStyle='#56708a';x.fillText('Day28',X[3],h-72);x.fillText('问答侧↑',X[3],h-56);
+  // 移动的块
+  packs.forEach((p,k)=>{const yi=60+p.d*((h-130)/docs)+15;const seg=Math.min(3,Math.floor(p.prog));const f=p.prog-seg;let px,py=yi;
+    if(p.prog>=3){return;} px=X[Math.max(0,seg)]+ (X[Math.min(3,seg+1)]-X[seg<0?0:seg])*f;
+    x.fillStyle=p.prog<1?COL.doc:p.prog<2?COL.chunk:COL.emb;x.globalAlpha=.9;
+    if(p.prog<2){x.fillRect(px-7,py-6,14,12);}else{x.beginPath();x.arc(px,py,6,0,7);x.fill();}x.globalAlpha=1;});
+  // 已入库点阵
+  for(let i=0;i<indexed;i++){const cx=X[3]-30+(i%6)*12, cy=70+Math.floor(i/6)*12;x.fillStyle=COL.ok;x.beginPath();x.arc(cx,cy,4,0,7);x.fill();}
+  x.fillStyle=COL.mut;x.fillText('块×768维',X[2],h-40);
+}
+function step(){if(!run)return;t++;packs.forEach(p=>{if(p.prog<3&&p.d*4+p.j*2<t*0.6)p.prog=Math.min(3,p.prog+0.045);});
+  indexed=packs.filter(p=>p.prog>=3).length;document.getElementById('cnt').textContent=indexed;draw();
+  if(indexed<packs.length)requestAnimationFrame(step);else{run=false;document.getElementById('run').textContent='✓ 入库完成';}}
+document.getElementById('run').onclick=e=>{if(indexed>=packs.length){build();}run=true;e.target.textContent='⏳ 索引中';step();};
+document.getElementById('reset').onclick=()=>{run=false;build();document.getElementById('cnt').textContent=0;document.getElementById('run').textContent='▶ 开始索引';draw();};
+const nd=document.getElementById('ndoc');nd.oninput=()=>{docs=+nd.value;document.getElementById('ndocv').textContent=docs;build();document.getElementById('cnt').textContent=0;draw();};
+build();draw();window.onresize=draw;
+</script>
+</body>
+</html>

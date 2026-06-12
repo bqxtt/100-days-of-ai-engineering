@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 37 · LangChain 四件套：Chain / Memory / Tool / Agent</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:22px 24px 4px;text-align:center}
+  h1{margin:0;font-size:22px}
+  .sub{color:var(--mut);margin-top:6px;font-size:13px}
+  .wrap{max-width:1060px;margin:0 auto;padding:14px;display:grid;gap:14px;grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 8px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:7px 14px;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  p.note{color:var(--mut);font-size:12px;margin:8px 0 0}
+  .tag{color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 37 · LangChain 四件套</h1>
+  <div class="sub">Chain=函数串联 · Memory=历史list · Tool=注册表 · Agent=ReAct循环 — 全是后端老套路，点开看每块怎么动</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>① Chain <small>prompt模板 → 模型 → 解析（LCEL 的 |）</small></h2>
+    <canvas id="cChain" width="500" height="170"></canvas>
+    <div class="row"><button onclick="runChain()">▶ 跑一遍数据</button></div>
+    <p class="note">数据逐段流过：变量填进模板 → 调模型 → 解析输出。竖线就是函数 compose。</p>
+  </div>
+  <div class="card">
+    <h2>② Memory <small>对话历史 list，模型本无记忆</small></h2>
+    <canvas id="cMem" width="500" height="170"></canvas>
+    <div class="row"><button onclick="memTurn()">▶ 再说一轮</button><button class="ghost" onclick="memReset()">重置</button></div>
+    <p class="note">每轮 append 用户+AI，越堆越高一起发回去——这就是"记忆"，跟 session 一样。</p>
+  </div>
+  <div class="card">
+    <h2>③ Tool <small>名字 → 函数 注册表 = dispatch table</small></h2>
+    <canvas id="cTool" width="500" height="170"></canvas>
+    <div class="row"><button onclick="callTool('add')">add</button><button onclick="callTool('upper')">upper</button><button onclick="callTool('length')">length</button></div>
+    <p class="note">模型说调谁，代码查表执行。点工具看命中哪格。</p>
+  </div>
+  <div class="card">
+    <h2>④ Agent <small>ReAct 循环：Reason→Act→Observe</small></h2>
+    <canvas id="cAg" width="500" height="170"></canvas>
+    <div class="row"><button onclick="agStep()">▶ 走一步</button><button class="ghost" onclick="agReset()">重置</button></div>
+    <p class="note">while 里转圈：想→选工具→看结果→再想，直到 ANSWER。Tool+Memory+Chain 的编排。</p>
+  </div>
+</div>
+<script>
+const C={mut:"#8b949e",fg:"#e6edf3",ac:"#58a6ff",ok:"#3fb950",wn:"#f0883e",bad:"#da3633",ln:"#283143"};
+function box(g,x,y,w,h,t,c){g.strokeStyle=c||C.ln;g.lineWidth=2;g.fillStyle="#0d1320";g.beginPath();g.roundRect(x,y,w,h,8);g.fill();g.stroke();g.fillStyle=C.fg;g.font="13px sans-serif";g.textAlign="center";g.fillText(t,x+w/2,y+h/2+4);}
+function arrow(g,x1,y,x2,c){g.strokeStyle=c||C.mut;g.lineWidth=2;g.beginPath();g.moveTo(x1,y);g.lineTo(x2,y);g.stroke();g.beginPath();g.moveTo(x2,y);g.lineTo(x2-7,y-4);g.lineTo(x2-7,y+4);g.fillStyle=c||C.mut;g.fill();}
+
+// ① Chain
+const cc=document.getElementById("cChain").getContext("2d");
+function chain(hi){cc.clearRect(0,0,500,170);const st=["topic=缓存","prompt模板","模型","解析","一句话定义"];const w=86;let x=14;st.forEach((s,i)=>{box(cc,x,62,w,46,s,i==hi?C.ac:C.ln);if(i<4)arrow(cc,x+w,85,x+w+14,i<hi?C.ok:C.mut);x+=w+14;});cc.fillStyle=C.mut;cc.font="12px sans-serif";cc.fillText("prompt | model | parser",250,150);}
+function runChain(){let i=0;const t=setInterval(()=>{chain(i);if(i++>4)clearInterval(t);},420);}chain(-1);
+
+// ② Memory
+const cm=document.getElementById("cMem").getContext("2d");let mem=[];const mq=["我叫小后端","我叫什么"];
+function drawMem(){cm.clearRect(0,0,500,170);cm.fillStyle=C.mut;cm.font="12px sans-serif";cm.textAlign="left";cm.fillText("messages[] 历史越堆越高，整段发给模型：",14,18);let y=148;mem.slice(-5).forEach(m=>{const u=m[0]=="U";box(cm,u?14:160,y-22,326,20,(u?"🧑 ":"🤖 ")+m.slice(2),u?C.ac:C.ok);y-=26;});}
+function memTurn(){const i=mem.filter(m=>m[0]=="U").length;mem.push("U:"+(mq[i]||"...再聊"));mem.push("A:"+(i==1?"你叫小后端":"好的"));drawMem();}
+function memReset(){mem=[];drawMem();}memReset();
+
+// ③ Tool
+const ct=document.getElementById("cTool").getContext("2d");
+function tool(hi){ct.clearRect(0,0,500,170);ct.fillStyle=C.mut;ct.font="12px sans-serif";ct.textAlign="left";ct.fillText("TOOLS = { 名字 → 函数 }  模型说调谁，查表执行",14,20);const t=["add","upper","length"];t.forEach((n,i)=>{box(ct,40,40+i*42,180,32,n+"(args)",n==hi?C.ok:C.ln);box(ct,300,40+i*42,160,32,"→ 函数体",n==hi?C.ok:C.ln);if(n==hi)arrow(ct,222,56+i*42,298,C.ok);});}
+function callTool(n){tool(n);}tool(null);
+
+// ④ Agent
+const ca=document.getElementById("cAg").getContext("2d");let ag=0;const steps=["问题","Reason 想","Act add|7,5","Observe=12","ANSWER 12"];
+function drawAg(){ca.clearRect(0,0,500,170);const cx=250,cy=88,r=58,n=steps.length;for(let i=0;i<n;i++){const a=-Math.PI/2+i*2*Math.PI/n;const x=cx+r*Math.cos(a)*1.9,y=cy+r*Math.sin(a);box(ca,x-66,y-15,132,30,steps[i],i==ag%n?C.wn:C.ln);}ca.strokeStyle=C.mut;ca.beginPath();ca.arc(cx,cy,r,0,7);ca.stroke();ca.fillStyle=C.mut;ca.font="12px sans-serif";ca.textAlign="center";ca.fillText("while 循环",cx,cy+4);}
+function agStep(){ag++;drawAg();}function agReset(){ag=0;drawAg();}agReset();
+</script>
+</body>
+</html>

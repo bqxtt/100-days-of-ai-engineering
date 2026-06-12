@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 41 · LLM 三层记忆系统</title>
+<style>
+  :root{--bg:#0e1117;--card:#161b22;--line:#283143;--fg:#e6edf3;--mut:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#f0883e;--bad:#da3633}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC",Segoe UI,sans-serif}
+  header{padding:24px 24px 6px;text-align:center}
+  h1{margin:0;font-size:23px}
+  .sub{color:var(--mut);margin-top:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:14px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{margin:0 0 10px;font-size:16px}
+  h2 small{color:var(--mut);font-weight:400;font-size:12px}
+  canvas{width:100%;background:#0b0f15;border-radius:8px;display:block}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--accent);color:#06121f;border:0;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  p.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+  .stat{font-variant-numeric:tabular-nums;color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Day 41 · LLM 三层记忆系统</h1>
+  <div class="sub">短期=缓存(对话窗口) · 长期=数据库(向量库存事实) · 摘要=日志归档(旧消息压缩)</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>三层记忆联动 <small>每加一轮：进短期窗口；超窗口压成摘要；最后一问从长期库余弦召回</small></h2>
+    <canvas id="cv" height="400"></canvas>
+    <div class="row">
+      <button id="next">▶ 加一轮对话</button>
+      <button id="reset" class="ghost">重置</button>
+      <span>短期 <span class="stat" id="s">0/4</span></span>
+      <span>摘要 <span class="stat" id="u">无</span></span>
+      <span>召回 <span class="stat" id="r">—</span></span>
+    </div>
+    <p class="note">绿=短期窗口内 橙=被挤出去压成摘要 蓝=长期事实按相关性召回。窗口=4，超了就归档。</p>
+  </div>
+</div>
+<script>
+const W=4; // 短期窗口
+const TURNS=['你好聊数据库','索引怎么选','分库分表','性能调优','我最爱哪个DB?'];
+const FACTS=['用户=张三/后端','最爱PostgreSQL','在做RAG项目','不喜欢MongoDB'];
+let short=[],evicted=0,summary=false,recall=-1,n=0;
+const c=document.getElementById('cv'),x=c.getContext('2d');
+function clr(){c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.clearRect(0,0,c.clientWidth,c.clientHeight)}
+function box(X,Y,w,h,fill,stroke,txt,tc){x.fillStyle=fill;x.strokeStyle=stroke;x.lineWidth=2;x.fillRect(X,Y,w,h);x.strokeRect(X,Y,w,h);x.fillStyle=tc;x.font='12px sans-serif';x.fillText(txt,X+8,Y+h/2+4)}
+function draw(){clr();const Wd=c.clientWidth;
+ x.fillStyle='#8b949e';x.font='13px sans-serif';
+ x.fillText('短期记忆 · 缓存(窗口4)',24,26);x.fillText('摘要 · 日志归档',24,196);x.fillText('长期记忆 · 数据库(向量库)',Wd/2+40,26);
+ // 短期窗口
+ short.forEach((m,i)=>box(24,38+i*32,Wd/2-60,26,'#13351c','#3fb950',m,'#e6edf3'));
+ for(let i=short.length;i<W;i++)box(24,38+i*32,Wd/2-60,26,'#11161f','#283143','(空)','#5a626e');
+ // 摘要
+ box(24,206,Wd/2-60,46,summary?'#3a2a14':'#11161f',summary?'#f0883e':'#283143',
+     summary?'摘要: 前'+evicted+'轮已压成一句':'(未触发，<4 轮)',summary?'#f0883e':'#5a626e');
+ // 长期向量库
+ FACTS.forEach((f,i)=>{const hit=recall===i;box(Wd/2+40,38+i*40,Wd/2-64,32,hit?'#0d2b4d':'#11161f',hit?'#58a6ff':'#283143',f,hit?'#58a6ff':'#8b949e');
+   if(hit){x.fillStyle='#58a6ff';x.font='11px sans-serif';x.fillText('▲ 余弦召回',Wd-130,38+i*40+20)}});
+ x.fillStyle='#8b949e';x.font='12px sans-serif';x.fillText('当前问: '+(TURNS[n-1]||'—'),24,290);
+ document.getElementById('s').textContent=short.length+'/4';
+ document.getElementById('u').textContent=summary?'前'+evicted+'轮':'无';
+ document.getElementById('r').textContent=recall<0?'—':FACTS[recall];
+}
+document.getElementById('next').onclick=()=>{if(n>=TURNS.length)return;short.push(TURNS[n]);n++;
+ if(short.length>W){evicted+=short.length-W;short=short.slice(-W);summary=true}
+ recall=(n===TURNS.length)?1:-1; draw()};
+document.getElementById('reset').onclick=()=>{short=[];evicted=0;summary=false;recall=-1;n=0;draw()};
+draw();window.onresize=draw;
+</script>
+</body>
+</html>
